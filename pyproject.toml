@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "synaptiq"
+version = "0.1.0"
+description = "A production-grade data processing pipeline for personal knowledge management"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.1.0",
+    "supadata>=1.0.0",
+    "openai>=1.12.0",
+    "qdrant-client>=1.7.0",
+    "motor>=3.3.0",
+    "pymongo>=4.6.0",
+    "celery[redis]>=5.3.0",
+    "redis>=5.0.0",
+    "click>=8.1.0",
+    "rich>=13.7.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.26.0",
+    "tiktoken>=0.6.0",
+    "tenacity>=8.2.0",
+    "structlog>=24.1.0",
+]
+
+[project.scripts]
+synaptiq = "synaptiq.cli.commands:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+

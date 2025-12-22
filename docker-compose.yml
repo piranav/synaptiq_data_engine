@@ -1,0 +1,42 @@
+# Docker Compose for local development
+# Provides Redis for Celery broker
+
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: synaptiq-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Optional: Local MongoDB for development
+  # Uncomment if you want to run MongoDB locally instead of Atlas
+  # mongodb:
+  #   image: mongo:7
+  #   container_name: synaptiq-mongodb
+  #   ports:
+  #     - "27017:27017"
+  #   volumes:
+  #     - mongodb_data:/data/db
+  #   environment:
+  #     MONGO_INITDB_DATABASE: synaptiq
+  #   healthcheck:
+  #     test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+volumes:
+  redis_data:
+  # mongodb_data:
+
+

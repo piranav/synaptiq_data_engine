@@ -1,0 +1,541 @@
+"""
+LLM-based concept extractor for enriching chunks with semantic metadata.
+
+Uses OpenAI GPT models to extract:
+- Key concepts/topics
+- Definitions
+- Claims and relationships
+"""
+
+import asyncio
+import json
+import re
+from typing import Optional
+
+import structlog
+from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+from config.settings import get_settings
+from synaptiq.core.exceptions import ProcessingError, RateLimitError
+from synaptiq.core.schemas import Chunk
+from synaptiq.processors.base import BaseProcessor
+
+logger = structlog.get_logger(__name__)
+
+
+# Structured output schemas
+class ConceptExtractionResult(BaseModel):
+    """Result of concept extraction for a single chunk."""
+
+    concepts: list[str] = Field(
+        default_factory=list,
+        description="Key concepts, topics, and entities mentioned in the text",
+    )
+    has_definition: bool = Field(
+        default=False,
+        description="Whether the text contains a definition of a concept",
+    )
+    defined_concept: Optional[str] = Field(
+        default=None,
+        description="The concept being defined, if has_definition is True",
+    )
+    claims: list[str] = Field(
+        default_factory=list,
+        description="Key claims or assertions made in the text",
+    )
+
+
+class BatchExtractionResult(BaseModel):
+    """Result of batch concept extraction."""
+
+    results: list[ConceptExtractionResult]
+
+
+EXTRACTION_SYSTEM_PROMPT = """You are a knowledge extraction assistant. Your task is to analyze text chunks and extract structured information.
+
+For each text chunk, extract:
+
+1. **Concepts**: Key topics, entities, technical terms, and important nouns/noun phrases. Focus on:
+   - Technical terms and jargon
+   - Named entities (people, organizations, technologies)
+   - Abstract concepts being discussed
+   - Domain-specific vocabulary
+
+2. **Definitions**: Determine if the text contains a definition. Look for patterns like:
+   - "X is Y"
+   - "X refers to Y"
+   - "X means Y"
+   - "X is defined as Y"
+   - Explicit explanations of what something is
+
+3. **Claims**: Key assertions, facts, or statements being made. Focus on:
+   - Factual statements
+   - Assertions that could be verified
+   - Important takeaways
+
+Be precise and extract only genuinely relevant concepts. Limit to the most important items.
+
+Respond in JSON format with this structure:
+"concepts": ["concept1", "concept2", ...],"has_definition": true/false,"defined_concept": "concept name or null","claims": ["claim1", "claim2", ...] """
+
+BATCH_EXTRACTION_PROMPT = """Analyze the following text chunks and extract concepts, definitions, and claims from each.
+
+{chunks}
+
+Respond with a JSON object containing a "results" array with one result object per chunk, in the same order as the input.
+Each result should have: concepts (array), has_definition (boolean), defined_concept (string or null), claims (array).
+
+Example response format:
+{{"results": [{{"concepts": ["tensor", "matrix"], "has_definition": true, "defined_concept": "tensor", "claims": ["Tensors generalize matrices"]}},{{"concepts": ["neural network"], "has_definition": false, "defined_concept": null, "claims": []}}]}}
+"""
+
+
+class ConceptExtractor(BaseProcessor):
+    """
+    LLM-based concept extraction using OpenAI.
+    
+    Extracts:
+    - Key concepts/topics from each chunk
+    - Definitions (e.g., "X is Y", "X refers to Y")
+    - Claims and key assertions
+    
+    Features:
+    - Batch processing for efficiency (reduces API calls)
+    - Heuristic pre-filtering to skip obvious non-definition chunks
+    - Retry logic with exponential backoff
+    - Configurable model and parameters
+    """
+
+    def __init__(
+        self,
+        model: str = "gpt-4o-mini",
+        extract_concepts: bool = True,
+        detect_definitions: bool = True,
+        extract_claims: bool = True,
+        max_concepts_per_chunk: int = 10,
+        max_claims_per_chunk: int = 5,
+        batch_size: int = 5,
+        use_heuristics: bool = True,
+    ):
+        """
+        Initialize the concept extractor.
+        
+        Args:
+            model: OpenAI model to use (default: gpt-4o-mini for cost efficiency)
+            extract_concepts: Whether to extract concepts
+            detect_definitions: Whether to detect definitions
+            extract_claims: Whether to extract claims
+            max_concepts_per_chunk: Maximum concepts to extract per chunk
+            max_claims_per_chunk: Maximum claims to extract per chunk
+            batch_size: Number of chunks to process per API call
+            use_heuristics: Use pattern matching to pre-filter definition detection
+        """
+        settings = get_settings()
+        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+        self.model = model
+        self.extract_concepts = extract_concepts
+        self.detect_definitions = detect_definitions
+        self.extract_claims = extract_claims
+        self.max_concepts_per_chunk = max_concepts_per_chunk
+        self.max_claims_per_chunk = max_claims_per_chunk
+        self.batch_size = batch_size
+        self.use_heuristics = use_heuristics
+
+        logger.info(
+            "ConceptExtractor initialized",
+            model=self.model,
+            batch_size=batch_size,
+            extract_concepts=extract_concepts,
+            detect_definitions=detect_definitions,
+            extract_claims=extract_claims,
+        )
+
+    async def process(self, chunks: list[Chunk]) -> list[Chunk]:
+        """
+        Process chunks to extract concepts, definitions, and claims.
+        
+        Args:
+            chunks: Input chunks
+            
+        Returns:
+            Chunks with concepts[], has_definition, and metadata populated
+        """
+        if not chunks:
+            return chunks
+
+        logger.info("ConceptExtractor processing", chunk_count=len(chunks))
+
+        # Process in batches for efficiency
+        for i in range(0, len(chunks), self.batch_size):
+            batch = chunks[i : i + self.batch_size]
+            logger.debug(
+                "Processing batch",
+                batch_start=i,
+                batch_size=len(batch),
+            )
+
+            try:
+                results = await self._extract_batch(batch)
+
+                # Update chunks with extraction results
+                for chunk, result in zip(batch, results):
+                    chunk.concepts = result.concepts[: self.max_concepts_per_chunk]
+                    chunk.has_definition = result.has_definition
+
+                    # Store additional metadata
+                    chunk.metadata["defined_concept"] = result.defined_concept
+                    chunk.metadata["claims"] = result.claims[: self.max_claims_per_chunk]
+
+            except Exception as e:
+                logger.error(
+                    "Batch extraction failed, using fallback",
+                    batch_start=i,
+                    error=str(e),
+                )
+                # Fallback to heuristics only
+                for chunk in batch:
+                    chunk.concepts = self._extract_concepts_heuristic(chunk.text)
+                    chunk.has_definition = self._detect_definition_patterns(chunk.text)
+
+        logger.info(
+            "ConceptExtractor complete",
+            chunk_count=len(chunks),
+            chunks_with_definitions=sum(1 for c in chunks if c.has_definition),
+        )
+
+        return chunks
+
+    @retry(
+        retry=retry_if_exception_type((RateLimitError,)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=60),
+    )
+    async def _extract_batch(
+        self, chunks: list[Chunk]
+    ) -> list[ConceptExtractionResult]:
+        """
+        Extract concepts from a batch of chunks in a single API call.
+        
+        Args:
+            chunks: Batch of chunks to process
+            
+        Returns:
+            List of extraction results
+        """
+        # Format chunks for the prompt
+        chunks_text = "\n\n".join(
+            f"[CHUNK {i+1}]\n{chunk.text}"
+            for i, chunk in enumerate(chunks)
+        )
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": BATCH_EXTRACTION_PROMPT.format(chunks=chunks_text),
+                    },
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,  # Low temperature for consistent extraction
+                max_tokens=2000,
+            )
+            content = response.choices[0].message.content
+            
+            # Log the full LLM response so we can see it in Celery logs
+            logger.warning("LLM RESPONSE", full_content=content)
+            
+            if not content:
+                logger.warning("Empty response from LLM")
+                return [self._extract_heuristic_result(c.text) for c in chunks]
+            
+            # Clean up content - remove markdown code blocks if present
+            content = content.strip()
+            if content.startswith("```"):
+                # Remove markdown code block wrapper
+                lines = content.split("\n")
+                # Remove first line (```json or ```) and last line (```)
+                if lines[-1].strip() == "```":
+                    lines = lines[1:-1]
+                else:
+                    lines = lines[1:]
+                content = "\n".join(lines)
+            
+            # Parse JSON
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError as e:
+                logger.error(
+                    "Failed to parse LLM response as JSON",
+                    error=str(e),
+                    content_preview=content[:200] if content else "empty",
+                )
+                return [self._extract_heuristic_result(c.text) for c in chunks]
+
+            logger.debug(
+                "LLM response parsed",
+                parsed_type=type(parsed).__name__,
+                parsed_keys=list(parsed.keys()) if isinstance(parsed, dict) else None,
+            )
+
+            # Handle different response formats
+            raw_results = []
+            if isinstance(parsed, dict):
+                # Expected format: {"results": [...]}
+                raw_results = parsed.get("results", [])
+                
+                # Validate that results is actually a list
+                if raw_results and not isinstance(raw_results, list):
+                    logger.warning(
+                        "Results field is not a list",
+                        results_type=type(raw_results).__name__,
+                    )
+                    # If results is a dict, wrap it in a list
+                    if isinstance(raw_results, dict):
+                        raw_results = [raw_results]
+                    else:
+                        raw_results = []
+                
+                # Sometimes LLM returns results at top level without "results" key
+                if not raw_results and len(parsed) > 0:
+                    # Check if the dict contains numbered keys like "1", "2", etc.
+                    keys = list(parsed.keys())
+                    if all(k.isdigit() for k in keys):
+                        raw_results = [parsed.get(k) for k in sorted(keys, key=int)]
+                    # Or check if it's a single result (when only one chunk)
+                    elif "concepts" in parsed:
+                        raw_results = [parsed]
+                        
+            elif isinstance(parsed, list):
+                # Sometimes LLM returns just the array directly
+                raw_results = parsed
+
+            if not raw_results:
+                logger.warning(
+                    "No results found in LLM response",
+                    parsed_keys=list(parsed.keys()) if isinstance(parsed, dict) else "list",
+                )
+                return [self._extract_heuristic_result(c.text) for c in chunks]
+
+            logger.debug(
+                "Processing raw results",
+                raw_results_count=len(raw_results),
+                first_result_type=type(raw_results[0]).__name__ if raw_results else None,
+            )
+
+            # Parse results
+            results = []
+            for i, chunk in enumerate(chunks):
+                if i < len(raw_results):
+                    raw = raw_results[i]
+                    if isinstance(raw, dict):
+                        # Safely extract each field
+                        concepts = raw.get("concepts") if isinstance(raw.get("concepts"), list) else []
+                        has_def = bool(raw.get("has_definition", False))
+                        defined = raw.get("defined_concept")
+                        claims = raw.get("claims") if isinstance(raw.get("claims"), list) else []
+                        
+                        results.append(
+                            ConceptExtractionResult(
+                                concepts=concepts,
+                                has_definition=has_def,
+                                defined_concept=defined,
+                                claims=claims,
+                            )
+                        )
+                    else:
+                        logger.warning(
+                            f"Unexpected result format at index {i}",
+                            raw_type=type(raw).__name__,
+                            raw_preview=str(raw)[:100] if raw else "empty",
+                        )
+                        results.append(self._extract_heuristic_result(chunk.text))
+                else:
+                    # Fallback if LLM didn't return enough results
+                    results.append(self._extract_heuristic_result(chunk.text))
+
+            return results
+
+        except json.JSONDecodeError as e:
+            logger.error("Failed to parse LLM response", error=str(e))
+            # Fallback to heuristics
+            return [self._extract_heuristic_result(c.text) for c in chunks]
+
+        except Exception as e:
+            error_message = str(e).lower()
+            if "rate limit" in error_message:
+                logger.warning("Rate limit hit, will retry", error=str(e))
+                raise RateLimitError(
+                    message="OpenAI rate limit exceeded",
+                    retry_after=60,
+                    cause=e,
+                )
+            # Log the full error for debugging
+            logger.error("Unexpected error in concept extraction", error=str(e), error_type=type(e).__name__)
+            raise
+
+    async def _extract_single(self, text: str) -> ConceptExtractionResult:
+        """
+        Extract concepts from a single text chunk.
+        
+        Used as fallback for failed batches.
+        """
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+                max_tokens=500,
+            )
+
+            content = response.choices[0].message.content
+            parsed = json.loads(content)
+
+            return ConceptExtractionResult(
+                concepts=parsed.get("concepts", []),
+                has_definition=parsed.get("has_definition", False),
+                defined_concept=parsed.get("defined_concept"),
+                claims=parsed.get("claims", []),
+            )
+
+        except Exception as e:
+            logger.warning("Single extraction failed", error=str(e))
+            return self._extract_heuristic_result(text)
+
+    def _extract_heuristic_result(self, text: str) -> ConceptExtractionResult:
+        """
+        Extract concepts using heuristics (fallback).
+        """
+        return ConceptExtractionResult(
+            concepts=self._extract_concepts_heuristic(text),
+            has_definition=self._detect_definition_patterns(text),
+            defined_concept=None,
+            claims=[],
+        )
+
+    def _extract_concepts_heuristic(self, text: str) -> list[str]:
+        """
+        Extract concepts using simple NLP heuristics.
+        
+        Extracts capitalized terms and common technical patterns.
+        """
+        concepts = set()
+        
+        # Common stop words to filter out
+        stop_words = {
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
+            "be", "have", "has", "had", "do", "does", "did", "will", "would",
+            "could", "should", "may", "might", "must", "shall", "can", "need",
+            "this", "that", "these", "those", "it", "its", "they", "them",
+            "we", "us", "our", "you", "your", "he", "she", "him", "her", "his",
+            "i", "me", "my", "if", "then", "else", "when", "where", "why", "how",
+            "all", "each", "every", "both", "few", "more", "most", "other",
+            "some", "such", "no", "nor", "not", "only", "own", "same", "so",
+            "than", "too", "very", "just", "also", "now", "here", "there",
+            "again", "further", "once", "however", "therefore", "finally",
+            "first", "second", "third", "one", "two", "three", "new", "old",
+            "let", "see", "get", "make", "know", "take", "come", "think",
+            "look", "want", "give", "use", "find", "tell", "ask", "work",
+            "seem", "feel", "try", "leave", "call", "keep", "put", "mean",
+            "become", "show", "hear", "play", "run", "move", "live", "believe",
+            "case", "point", "part", "place", "thing", "way", "fact", "group",
+            "number", "time", "year", "people", "state", "world", "area",
+        }
+
+        # Extract capitalized multi-word terms (potential proper nouns/technical terms)
+        # Require at least 2 characters and filter stop words
+        capitalized = re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b", text)
+        for term in capitalized:
+            term_lower = term.lower()
+            if len(term) > 2 and term_lower not in stop_words:
+                concepts.add(term_lower)
+
+        # Extract terms in quotes (likely important concepts)
+        quoted = re.findall(r'"([^"]+)"', text)
+        for q in quoted:
+            if len(q) < 50 and q.lower() not in stop_words:
+                concepts.add(q.lower())
+
+        # Extract technical/scientific patterns
+        technical_patterns = [
+            # Math/physics terms
+            r"\b(tensor|vector|matrix|scalar|rotation|transformation|coordinate\s+system)\b",
+            r"\b(equation|formula|derivative|integral|function|variable|constant)\b",
+            r"\b(angle|dimension|component|magnitude|direction|origin)\b",
+            # General technical terms
+            r"\b(\w+\s+(?:network|learning|model|algorithm|function|system|theory|method|matrix|tensor|vector)s?)\b",
+            r"\b((?:deep|machine|reinforcement|supervised|unsupervised|linear|nonlinear)\s+\w+)\b",
+            r"\b(\w+(?:ization|isation|ology|ometry|istics|ation))\b",
+            # Compound technical terms
+            r"\b(rotation\s+matrix|identity\s+matrix|coordinate\s+system|tensor\s+components?)\b",
+            r"\b(first\s+order|second\s+order)\s+(tensor|derivative|equation)\b",
+        ]
+
+        for pattern in technical_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for m in matches:
+                if isinstance(m, tuple):
+                    m = " ".join(m)
+                m_lower = m.lower().strip()
+                if m_lower and m_lower not in stop_words and len(m_lower) > 2:
+                    concepts.add(m_lower)
+
+        # Filter and sort by relevance (longer terms often more specific)
+        filtered_concepts = [c for c in concepts if c not in stop_words]
+        filtered_concepts.sort(key=lambda x: (-len(x.split()), x))
+        
+        return filtered_concepts[: self.max_concepts_per_chunk]
+
+    def _detect_definition_patterns(self, text: str) -> bool:
+        """
+        Detect if text contains a definition using regex patterns.
+        """
+        definition_patterns = [
+            # "X is Y" patterns
+            r"\b\w+\s+(?:is|are)\s+(?:a|an|the)\s+\w+",
+            r"\b\w+\s+(?:is|are)\s+defined\s+as\b",
+            r"\b\w+\s+refers?\s+to\b",
+            r"\b\w+\s+means?\s+(?:that|a|an|the)\b",
+            # Explicit definition markers
+            r"\bdef(?:ine|inition)?\s*[:=]",
+            r"\b(?:by\s+)?definition\b",
+            r"\bknown\s+as\b",
+            r"\bcalled\s+(?:a|an|the)?\s*\w+",
+            # Question-answer definitions
+            r"what\s+is\s+(?:a|an|the)?\s*\w+\??",
+        ]
+
+        for pattern in definition_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+
+        return False
+
+
+class ConceptExtractorDisabled(BaseProcessor):
+    """
+    No-op concept extractor for when extraction is disabled.
+    
+    Use this to skip concept extraction entirely:
+        pipeline = Pipeline(processors=[ConceptExtractorDisabled()])
+    """
+
+    async def process(self, chunks: list[Chunk]) -> list[Chunk]:
+        """Pass chunks through unchanged."""
+        logger.debug("ConceptExtractor disabled, skipping extraction")
+        return chunks
