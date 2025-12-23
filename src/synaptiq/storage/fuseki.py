@@ -595,26 +595,25 @@ class FusekiStore:
         }
         
         try:
+            logger.info("Executing SPARQL query", query=sparql)
+            
             response = await self.client.post(
                 self.query_endpoint,
                 data={"query": sparql},
-                headers={"Accept": accept_map.get(result_format, "application/sparql-results+json")},
+                headers={
+                    "Accept": accept_map.get(result_format, "application/sparql-results+json"),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
             )
             
-            if response.status_code != 200:
-                logger.error(
-                    "SPARQL query failed",
-                    status=response.status_code,
-                    response=response.text[:500],
-                    query=sparql[:200],
-                )
-                raise StorageError(
-                    message=f"SPARQL query failed: {response.text[:200]}",
-                    store_type="fuseki",
-                    operation="query",
-                )
+            response.raise_for_status()
             
-            return response.json()
+            if result_format == "json":
+                data = response.json()
+                logger.info("SPARQL results", results=data)
+                return data
+                
+            return response.text
             
         except httpx.RequestError as e:
             logger.error("Fuseki request failed", error=str(e))

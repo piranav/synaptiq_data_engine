@@ -227,14 +227,17 @@ class QdrantStore:
         )
 
         try:
-            results = await self.client.search(
+            results = await self.client.query_points(
                 collection_name=self.collection_name,
-                query_vector=query_vector,
+                query=query_vector,
                 query_filter=query_filter,
                 limit=limit,
                 score_threshold=score_threshold,
                 with_payload=True,
             )
+
+            # query_points returns QueryResponse object with points attribute
+            points = results.points if hasattr(results, "points") else results
 
             return [
                 {
@@ -242,7 +245,7 @@ class QdrantStore:
                     "score": hit.score,
                     "payload": hit.payload,
                 }
-                for hit in results
+                for hit in points
             ]
 
         except Exception as e:

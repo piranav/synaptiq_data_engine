@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from config.settings import get_settings
 from synaptiq.api.dependencies import cleanup_resources
-from synaptiq.api.routes import ingest, jobs, search, sources
+from synaptiq.api.routes import ingest, jobs, search, sources, chat
 from synaptiq.core.exceptions import SynaptiqError
 
 logger = structlog.get_logger(__name__)
@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
         - **Ingest** content from YouTube videos and web articles
         - **Process** with semantic chunking and embeddings
         - **Search** your knowledge base with vector similarity
+        - **Chat** with your knowledge using AI agents
         - **Cite** sources with timestamps and URLs
         
         ## Quick Start
@@ -67,7 +68,13 @@ def create_app() -> FastAPI:
            GET /jobs/{job_id}
            ```
         
-        3. **Search your knowledge:**
+        3. **Chat with your knowledge:**
+           ```
+           POST /chat/{user_id}
+           {"query": "What is a tensor?", "session_id": "my-session"}
+           ```
+        
+        4. **Search your knowledge:**
            ```
            POST /search
            {"query": "What is a tensor?", "user_id": "your_id"}
@@ -134,6 +141,7 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(jobs.router)
     app.include_router(sources.router)
+    app.include_router(chat.router)
 
     # Health check endpoint
     @app.get("/health", tags=["Health"])

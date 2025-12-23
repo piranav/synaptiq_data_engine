@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
 
+    # PostgreSQL (for Agent Sessions)
+    postgres_url: str = Field(
+        default="postgresql+asyncpg://synaptiq:synaptiq123@localhost:5433/synaptiq_agents",
+        description="PostgreSQL URL for agent sessions"
+    )
+
 
 @lru_cache()
 def get_settings() -> Settings:
