@@ -235,3 +235,118 @@ class Job(BaseModel):
         }
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ONTOLOGY / GRAPH SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class Triple(BaseModel):
+    """
+    An RDF triple for graph storage.
+    
+    Represents a subject-predicate-object statement in the knowledge graph.
+    """
+    
+    subject: str = Field(..., description="Subject URI")
+    predicate: str = Field(..., description="Predicate URI")
+    object: str = Field(..., description="Object URI or literal value")
+    is_literal: bool = Field(
+        default=False,
+        description="True if object is a literal value, False if URI",
+    )
+    
+    def to_ntriples(self) -> str:
+        """Convert to N-Triples format."""
+        if self.is_literal:
+            # Escape quotes in literal
+            escaped = self.object.replace("\\", "\\\\").replace('"', '\\"')
+            return f'<{self.subject}> <{self.predicate}> "{escaped}" .'
+        else:
+            return f'<{self.subject}> <{self.predicate}> <{self.object}> .'
+
+
+class RelationType(str, Enum):
+    """Types of relationships between concepts in the knowledge graph."""
+    
+    IS_A = "is_a"
+    PART_OF = "part_of"
+    PREREQUISITE_FOR = "prerequisite_for"
+    RELATED_TO = "related_to"
+    OPPOSITE_OF = "opposite_of"
+    USED_IN = "used_in"
+    SAME_AS = "same_as"
+
+
+class ExtractedRelationship(BaseModel):
+    """
+    A relationship between two concepts extracted from content.
+    
+    Used by the ConceptExtractor to capture relationships
+    like "tensor is_a array" or "linear_algebra prerequisite_for machine_learning".
+    """
+    
+    source_concept: str = Field(
+        ...,
+        description="The source concept in the relationship",
+    )
+    relation_type: str = Field(
+        ...,
+        description="Type of relationship (is_a, part_of, prerequisite_for, etc.)",
+    )
+    target_concept: str = Field(
+        ...,
+        description="The target concept in the relationship",
+    )
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score for this relationship (0-1)",
+    )
+
+
+class ConflictAction(str, Enum):
+    """Possible actions for concept conflict resolution."""
+    
+    CREATE_NEW = "CREATE_NEW"
+    MERGE_INTO = "MERGE_INTO"
+    LINK_EXISTING = "LINK_EXISTING"
+
+
+class ConflictResolution(BaseModel):
+    """
+    Result of conflict resolution for a concept.
+    
+    When a new concept is extracted, the ConflictResolver determines
+    if it should be created as new, merged with an existing concept,
+    or linked to an equivalent concept.
+    """
+    
+    action: ConflictAction = Field(
+        ...,
+        description="The resolution action to take",
+    )
+    concept_uri: str = Field(
+        ...,
+        description="URI of the concept to use (new or existing)",
+    )
+    merge_target_uri: Optional[str] = Field(
+        None,
+        description="URI of existing concept to merge into (if action is MERGE_INTO)",
+    )
+    reasoning: Optional[str] = Field(
+        None,
+        description="LLM's reasoning for the decision",
+    )
+
+
+class GraphStats(BaseModel):
+    """Statistics for a user's knowledge graph."""
+    
+    concept_count: int = Field(default=0, description="Number of concepts")
+    chunk_count: int = Field(default=0, description="Number of chunks")
+    source_count: int = Field(default=0, description="Number of sources")
+    definition_count: int = Field(default=0, description="Number of definitions")
+    relationship_count: int = Field(default=0, description="Number of relationships")
+    graph_uri: Optional[str] = Field(None, description="Named graph URI")
+
+

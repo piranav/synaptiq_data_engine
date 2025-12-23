@@ -3,8 +3,9 @@ LLM-based concept extractor for enriching chunks with semantic metadata.
 
 Uses OpenAI GPT models to extract:
 - Key concepts/topics
-- Definitions
-- Claims and relationships
+- Definitions with actual definition text
+- Claims and relationships between concepts
+- Concept relationships (isA, partOf, prerequisiteFor, relatedTo)
 """
 
 import asyncio
@@ -30,7 +31,31 @@ from synaptiq.processors.base import BaseProcessor
 logger = structlog.get_logger(__name__)
 
 
-# Structured output schemas
+# ═══════════════════════════════════════════════════════════════════════════════
+# STRUCTURED OUTPUT SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ExtractedRelationship(BaseModel):
+    """A relationship between two concepts extracted from text."""
+    
+    source_concept: str = Field(
+        ...,
+        description="The source concept in the relationship",
+    )
+    relation_type: str = Field(
+        ...,
+        description="Type of relationship: is_a, part_of, prerequisite_for, related_to, used_in, opposite_of",
+    )
+    target_concept: str = Field(
+        ...,
+        description="The target concept in the relationship",
+    )
+    confidence: float = Field(
+        default=1.0,
+        description="Confidence score for this relationship (0-1)",
+    )
+
+
 class ConceptExtractionResult(BaseModel):
     """Result of concept extraction for a single chunk."""
 
@@ -46,9 +71,17 @@ class ConceptExtractionResult(BaseModel):
         default=None,
         description="The concept being defined, if has_definition is True",
     )
+    definition_text: Optional[str] = Field(
+        default=None,
+        description="The actual definition text, if has_definition is True",
+    )
     claims: list[str] = Field(
         default_factory=list,
         description="Key claims or assertions made in the text",
+    )
+    relationships: list[ExtractedRelationship] = Field(
+        default_factory=list,
+        description="Relationships between concepts found in the text",
     )
 
 
@@ -58,7 +91,11 @@ class BatchExtractionResult(BaseModel):
     results: list[ConceptExtractionResult]
 
 
-EXTRACTION_SYSTEM_PROMPT = """You are a knowledge extraction assistant. Your task is to analyze text chunks and extract structured information.
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXTRACTION PROMPTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+EXTRACTION_SYSTEM_PROMPT = """You are a knowledge extraction assistant for building personal knowledge graphs. Your task is to analyze text chunks and extract structured information including concepts, definitions, and relationships between concepts.
 
 For each text chunk, extract:
 
@@ -74,27 +111,75 @@ For each text chunk, extract:
    - "X means Y"
    - "X is defined as Y"
    - Explicit explanations of what something is
+   If a definition is found, extract the actual definition text.
 
 3. **Claims**: Key assertions, facts, or statements being made. Focus on:
    - Factual statements
    - Assertions that could be verified
    - Important takeaways
 
-Be precise and extract only genuinely relevant concepts. Limit to the most important items.
+4. **Relationships**: Identify relationships between concepts. Look for:
+   - Taxonomic: "X is a type of Y", "X is a Y" → is_a
+   - Compositional: "X is part of Y", "X contains Y" → part_of
+   - Prerequisites: "X requires Y", "understanding X needs Y" → prerequisite_for
+   - Usage: "X is used in Y", "X applies to Y" → used_in
+   - Association: "X is related to Y", "X and Y are connected" → related_to
+   - Opposition: "X is the opposite of Y", "unlike X, Y" → opposite_of
+
+Be precise and extract only genuinely relevant items. Limit to the most important concepts and relationships.
 
 Respond in JSON format with this structure:
-"concepts": ["concept1", "concept2", ...],"has_definition": true/false,"defined_concept": "concept name or null","claims": ["claim1", "claim2", ...] """
+{
+    "concepts": ["concept1", "concept2", ...],
+    "has_definition": true/false,
+    "defined_concept": "concept name or null",
+    "definition_text": "the actual definition text or null",
+    "claims": ["claim1", "claim2", ...],
+    "relationships": [
+        {"source_concept": "X", "relation_type": "is_a", "target_concept": "Y", "confidence": 0.9},
+        ...
+    ]
+}"""
 
-BATCH_EXTRACTION_PROMPT = """Analyze the following text chunks and extract concepts, definitions, and claims from each.
+BATCH_EXTRACTION_PROMPT = """Analyze the following text chunks and extract concepts, definitions, claims, and relationships from each.
 
 {chunks}
 
 Respond with a JSON object containing a "results" array with one result object per chunk, in the same order as the input.
-Each result should have: concepts (array), has_definition (boolean), defined_concept (string or null), claims (array).
+Each result should have:
+- concepts (array of strings)
+- has_definition (boolean)
+- defined_concept (string or null)
+- definition_text (string or null - the actual definition if has_definition is true)
+- claims (array of strings)
+- relationships (array of objects with source_concept, relation_type, target_concept, confidence)
+
+Valid relation_type values: is_a, part_of, prerequisite_for, related_to, used_in, opposite_of
 
 Example response format:
-{{"results": [{{"concepts": ["tensor", "matrix"], "has_definition": true, "defined_concept": "tensor", "claims": ["Tensors generalize matrices"]}},{{"concepts": ["neural network"], "has_definition": false, "defined_concept": null, "claims": []}}]}}
-"""
+{{"results": [
+    {{
+        "concepts": ["tensor", "matrix", "array"],
+        "has_definition": true,
+        "defined_concept": "tensor",
+        "definition_text": "A tensor is a multi-dimensional array that generalizes scalars, vectors, and matrices.",
+        "claims": ["Tensors generalize matrices to higher dimensions"],
+        "relationships": [
+            {{"source_concept": "tensor", "relation_type": "is_a", "target_concept": "array", "confidence": 0.95}},
+            {{"source_concept": "matrix", "relation_type": "prerequisite_for", "target_concept": "tensor", "confidence": 0.8}}
+        ]
+    }},
+    {{
+        "concepts": ["neural network", "deep learning"],
+        "has_definition": false,
+        "defined_concept": null,
+        "definition_text": null,
+        "claims": [],
+        "relationships": [
+            {{"source_concept": "neural network", "relation_type": "part_of", "target_concept": "deep learning", "confidence": 0.85}}
+        ]
+    }}
+]}}"""
 
 
 class ConceptExtractor(BaseProcessor):
@@ -103,8 +188,9 @@ class ConceptExtractor(BaseProcessor):
     
     Extracts:
     - Key concepts/topics from each chunk
-    - Definitions (e.g., "X is Y", "X refers to Y")
+    - Definitions with actual definition text
     - Claims and key assertions
+    - Relationships between concepts (is_a, part_of, prerequisite_for, etc.)
     
     Features:
     - Batch processing for efficiency (reduces API calls)
@@ -119,8 +205,10 @@ class ConceptExtractor(BaseProcessor):
         extract_concepts: bool = True,
         detect_definitions: bool = True,
         extract_claims: bool = True,
+        extract_relationships: bool = True,
         max_concepts_per_chunk: int = 10,
         max_claims_per_chunk: int = 5,
+        max_relationships_per_chunk: int = 10,
         batch_size: int = 5,
         use_heuristics: bool = True,
     ):
@@ -132,8 +220,10 @@ class ConceptExtractor(BaseProcessor):
             extract_concepts: Whether to extract concepts
             detect_definitions: Whether to detect definitions
             extract_claims: Whether to extract claims
+            extract_relationships: Whether to extract relationships between concepts
             max_concepts_per_chunk: Maximum concepts to extract per chunk
             max_claims_per_chunk: Maximum claims to extract per chunk
+            max_relationships_per_chunk: Maximum relationships to extract per chunk
             batch_size: Number of chunks to process per API call
             use_heuristics: Use pattern matching to pre-filter definition detection
         """
@@ -144,8 +234,10 @@ class ConceptExtractor(BaseProcessor):
         self.extract_concepts = extract_concepts
         self.detect_definitions = detect_definitions
         self.extract_claims = extract_claims
+        self.extract_relationships = extract_relationships
         self.max_concepts_per_chunk = max_concepts_per_chunk
         self.max_claims_per_chunk = max_claims_per_chunk
+        self.max_relationships_per_chunk = max_relationships_per_chunk
         self.batch_size = batch_size
         self.use_heuristics = use_heuristics
 
@@ -156,17 +248,18 @@ class ConceptExtractor(BaseProcessor):
             extract_concepts=extract_concepts,
             detect_definitions=detect_definitions,
             extract_claims=extract_claims,
+            extract_relationships=extract_relationships,
         )
 
     async def process(self, chunks: list[Chunk]) -> list[Chunk]:
         """
-        Process chunks to extract concepts, definitions, and claims.
+        Process chunks to extract concepts, definitions, claims, and relationships.
         
         Args:
             chunks: Input chunks
             
         Returns:
-            Chunks with concepts[], has_definition, and metadata populated
+            Chunks with concepts[], has_definition, relationships, and metadata populated
         """
         if not chunks:
             return chunks
@@ -192,7 +285,19 @@ class ConceptExtractor(BaseProcessor):
 
                     # Store additional metadata
                     chunk.metadata["defined_concept"] = result.defined_concept
+                    chunk.metadata["definition_text"] = result.definition_text
                     chunk.metadata["claims"] = result.claims[: self.max_claims_per_chunk]
+                    
+                    # Store relationships in metadata
+                    chunk.metadata["relationships"] = [
+                        {
+                            "source_concept": r.source_concept,
+                            "relation_type": r.relation_type,
+                            "target_concept": r.target_concept,
+                            "confidence": r.confidence,
+                        }
+                        for r in result.relationships[: self.max_relationships_per_chunk]
+                    ]
 
             except Exception as e:
                 logger.error(
@@ -204,11 +309,15 @@ class ConceptExtractor(BaseProcessor):
                 for chunk in batch:
                     chunk.concepts = self._extract_concepts_heuristic(chunk.text)
                     chunk.has_definition = self._detect_definition_patterns(chunk.text)
+                    chunk.metadata["relationships"] = self._extract_relationships_heuristic(chunk.text)
 
         logger.info(
             "ConceptExtractor complete",
             chunk_count=len(chunks),
             chunks_with_definitions=sum(1 for c in chunks if c.has_definition),
+            total_relationships=sum(
+                len(c.metadata.get("relationships", [])) for c in chunks
+            ),
         )
 
         return chunks
@@ -248,12 +357,12 @@ class ConceptExtractor(BaseProcessor):
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.1,  # Low temperature for consistent extraction
-                max_tokens=2000,
+                max_tokens=3000,  # Increased for relationship extraction
             )
             content = response.choices[0].message.content
             
             # Log the full LLM response so we can see it in Celery logs
-            logger.warning("LLM RESPONSE", full_content=content)
+            logger.debug("LLM RESPONSE", full_content=content)
             
             if not content:
                 logger.warning("Empty response from LLM")
@@ -343,14 +452,39 @@ class ConceptExtractor(BaseProcessor):
                         concepts = raw.get("concepts") if isinstance(raw.get("concepts"), list) else []
                         has_def = bool(raw.get("has_definition", False))
                         defined = raw.get("defined_concept")
+                        definition_text = raw.get("definition_text")
                         claims = raw.get("claims") if isinstance(raw.get("claims"), list) else []
+                        
+                        # Parse relationships
+                        raw_relationships = raw.get("relationships", [])
+                        relationships = []
+                        if isinstance(raw_relationships, list):
+                            for rel in raw_relationships:
+                                if isinstance(rel, dict):
+                                    try:
+                                        relationships.append(
+                                            ExtractedRelationship(
+                                                source_concept=rel.get("source_concept", ""),
+                                                relation_type=rel.get("relation_type", "related_to"),
+                                                target_concept=rel.get("target_concept", ""),
+                                                confidence=float(rel.get("confidence", 1.0)),
+                                            )
+                                        )
+                                    except (ValueError, TypeError) as e:
+                                        logger.warning(
+                                            "Failed to parse relationship",
+                                            rel=rel,
+                                            error=str(e),
+                                        )
                         
                         results.append(
                             ConceptExtractionResult(
                                 concepts=concepts,
                                 has_definition=has_def,
                                 defined_concept=defined,
+                                definition_text=definition_text,
                                 claims=claims,
+                                relationships=relationships,
                             )
                         )
                     else:
@@ -399,17 +533,37 @@ class ConceptExtractor(BaseProcessor):
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.1,
-                max_tokens=500,
+                max_tokens=1000,
             )
 
             content = response.choices[0].message.content
             parsed = json.loads(content)
 
+            # Parse relationships
+            raw_relationships = parsed.get("relationships", [])
+            relationships = []
+            if isinstance(raw_relationships, list):
+                for rel in raw_relationships:
+                    if isinstance(rel, dict):
+                        try:
+                            relationships.append(
+                                ExtractedRelationship(
+                                    source_concept=rel.get("source_concept", ""),
+                                    relation_type=rel.get("relation_type", "related_to"),
+                                    target_concept=rel.get("target_concept", ""),
+                                    confidence=float(rel.get("confidence", 1.0)),
+                                )
+                            )
+                        except (ValueError, TypeError):
+                            pass
+
             return ConceptExtractionResult(
                 concepts=parsed.get("concepts", []),
                 has_definition=parsed.get("has_definition", False),
                 defined_concept=parsed.get("defined_concept"),
+                definition_text=parsed.get("definition_text"),
                 claims=parsed.get("claims", []),
+                relationships=relationships,
             )
 
         except Exception as e:
@@ -424,7 +578,9 @@ class ConceptExtractor(BaseProcessor):
             concepts=self._extract_concepts_heuristic(text),
             has_definition=self._detect_definition_patterns(text),
             defined_concept=None,
+            definition_text=None,
             claims=[],
+            relationships=self._extract_relationships_heuristic_models(text),
         )
 
     def _extract_concepts_heuristic(self, text: str) -> list[str]:
@@ -525,6 +681,82 @@ class ConceptExtractor(BaseProcessor):
                 return True
 
         return False
+
+    def _extract_relationships_heuristic(self, text: str) -> list[dict]:
+        """
+        Extract relationships using heuristics (fallback).
+        Returns list of dicts for metadata storage.
+        """
+        relationships = []
+        
+        # Pattern: "X is a Y" / "X is a type of Y"
+        is_a_patterns = [
+            r"(\w+(?:\s+\w+)?)\s+(?:is|are)\s+(?:a|an)\s+(?:type\s+of\s+)?(\w+(?:\s+\w+)?)",
+            r"(\w+(?:\s+\w+)?)\s+(?:is|are)\s+(?:a|an)\s+kind\s+of\s+(\w+(?:\s+\w+)?)",
+        ]
+        
+        for pattern in is_a_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                if len(match) == 2:
+                    relationships.append({
+                        "source_concept": match[0].lower().strip(),
+                        "relation_type": "is_a",
+                        "target_concept": match[1].lower().strip(),
+                        "confidence": 0.7,
+                    })
+        
+        # Pattern: "X is part of Y" / "X contains Y"
+        part_of_patterns = [
+            r"(\w+(?:\s+\w+)?)\s+(?:is|are)\s+part\s+of\s+(\w+(?:\s+\w+)?)",
+            r"(\w+(?:\s+\w+)?)\s+contains?\s+(\w+(?:\s+\w+)?)",
+        ]
+        
+        for pattern in part_of_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                if len(match) == 2:
+                    relationships.append({
+                        "source_concept": match[0].lower().strip(),
+                        "relation_type": "part_of",
+                        "target_concept": match[1].lower().strip(),
+                        "confidence": 0.7,
+                    })
+        
+        # Pattern: "X requires Y" / "to understand X, you need Y"
+        prereq_patterns = [
+            r"(\w+(?:\s+\w+)?)\s+requires?\s+(\w+(?:\s+\w+)?)",
+            r"(?:to\s+)?understand(?:ing)?\s+(\w+(?:\s+\w+)?)\s+(?:requires?|needs?)\s+(\w+(?:\s+\w+)?)",
+        ]
+        
+        for pattern in prereq_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                if len(match) == 2:
+                    relationships.append({
+                        "source_concept": match[1].lower().strip(),
+                        "relation_type": "prerequisite_for",
+                        "target_concept": match[0].lower().strip(),
+                        "confidence": 0.7,
+                    })
+        
+        return relationships[:self.max_relationships_per_chunk]
+
+    def _extract_relationships_heuristic_models(self, text: str) -> list[ExtractedRelationship]:
+        """
+        Extract relationships using heuristics (fallback).
+        Returns list of ExtractedRelationship models.
+        """
+        raw_relationships = self._extract_relationships_heuristic(text)
+        return [
+            ExtractedRelationship(
+                source_concept=r["source_concept"],
+                relation_type=r["relation_type"],
+                target_concept=r["target_concept"],
+                confidence=r["confidence"],
+            )
+            for r in raw_relationships
+        ]
 
 
 class ConceptExtractorDisabled(BaseProcessor):

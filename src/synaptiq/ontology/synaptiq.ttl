@@ -1,0 +1,343 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# SYNAPTIQ ONTOLOGY
+# 
+# A knowledge graph ontology for personal knowledge management.
+# Loaded into <https://synaptiq.ai/ontology> named graph (shared, read-only).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@prefix syn:   <https://synaptiq.ai/ontology#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix dc:    <http://purl.org/dc/elements/1.1/> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ONTOLOGY METADATA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+<https://synaptiq.ai/ontology> a owl:Ontology ;
+    rdfs:label "Synaptiq Knowledge Ontology" ;
+    rdfs:comment "Ontology for personal knowledge management with concept extraction, relationships, and provenance tracking." ;
+    owl:versionInfo "1.0.0" ;
+    dc:creator "Synaptiq" ;
+    dcterms:created "2025-01-01"^^xsd:date .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLASSES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+syn:Concept a owl:Class ;
+    rdfs:label "Concept" ;
+    rdfs:comment "A knowledge concept owned by a user. Represents a topic, entity, or idea extracted from content." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:Definition a owl:Class ;
+    rdfs:label "Definition" ;
+    rdfs:comment "A user's understanding of a concept at a point in time, extracted from content." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:Chunk a owl:Class ;
+    rdfs:label "Chunk" ;
+    rdfs:comment "An atomic content unit, bridged to the vector store. Contains text and provenance." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:Source a owl:Class ;
+    rdfs:label "Source" ;
+    rdfs:comment "Origin of knowledge content. Abstract base class for different source types." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+# ───────────────────────────────────────────────────────────────────────────────
+# SOURCE SUBCLASSES
+# ───────────────────────────────────────────────────────────────────────────────
+
+syn:YouTubeSource a owl:Class ;
+    rdfs:subClassOf syn:Source ;
+    rdfs:label "YouTube Source" ;
+    rdfs:comment "A YouTube video as a knowledge source." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:WebArticleSource a owl:Class ;
+    rdfs:subClassOf syn:Source ;
+    rdfs:label "Web Article Source" ;
+    rdfs:comment "A web article or blog post as a knowledge source." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:NoteSource a owl:Class ;
+    rdfs:subClassOf syn:Source ;
+    rdfs:label "Note Source" ;
+    rdfs:comment "A user-created note as a knowledge source." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:PodcastSource a owl:Class ;
+    rdfs:subClassOf syn:Source ;
+    rdfs:label "Podcast Source" ;
+    rdfs:comment "A podcast episode as a knowledge source." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:PDFSource a owl:Class ;
+    rdfs:subClassOf syn:Source ;
+    rdfs:label "PDF Source" ;
+    rdfs:comment "A PDF document as a knowledge source." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONCEPT RELATIONSHIPS (User's knowledge structure)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+syn:isA a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Concept ;
+    rdfs:label "is a" ;
+    rdfs:comment "Taxonomic hierarchy relationship. Example: 'tensor isA array'" ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:partOf a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Concept ;
+    rdfs:label "part of" ;
+    rdfs:comment "Compositional relationship. Example: 'layer partOf neural_network'" ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:prerequisiteFor a owl:ObjectProperty, owl:TransitiveProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Concept ;
+    rdfs:label "prerequisite for" ;
+    rdfs:comment "Learning dependency relationship. Example: 'linear_algebra prerequisiteFor machine_learning'" ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:relatedTo a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Concept ;
+    rdfs:label "related to" ;
+    rdfs:comment "Weak semantic association between concepts." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:oppositeOf a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Concept ;
+    rdfs:label "opposite of" ;
+    rdfs:comment "Antonymous or contrasting concepts." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:usedIn a owl:ObjectProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Concept ;
+    rdfs:label "used in" ;
+    rdfs:comment "Concept X is used or applied in context Y. Example: 'backpropagation usedIn neural_network_training'" ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:sameAs a owl:ObjectProperty, owl:SymmetricProperty, owl:TransitiveProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Concept ;
+    rdfs:label "same as" ;
+    rdfs:comment "Indicates two concepts are semantically equivalent (merged concepts)." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROVENANCE RELATIONSHIPS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+syn:definedIn a owl:ObjectProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Chunk ;
+    rdfs:label "defined in" ;
+    rdfs:comment "Chunk where the concept is explicitly defined." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:mentionedIn a owl:ObjectProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Chunk ;
+    rdfs:label "mentioned in" ;
+    rdfs:comment "Chunk where the concept is referenced or discussed." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:hasDefinition a owl:ObjectProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Definition ;
+    rdfs:label "has definition" ;
+    rdfs:comment "Links a concept to its definition(s)." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:derivedFrom a owl:ObjectProperty ;
+    rdfs:domain syn:Chunk ;
+    rdfs:range syn:Source ;
+    rdfs:label "derived from" ;
+    rdfs:comment "Source provenance for a chunk." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:firstLearnedFrom a owl:ObjectProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range syn:Source ;
+    rdfs:label "first learned from" ;
+    rdfs:comment "First source where the user encountered this concept." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:extractedFrom a owl:ObjectProperty ;
+    rdfs:domain syn:Definition ;
+    rdfs:range syn:Chunk ;
+    rdfs:label "extracted from" ;
+    rdfs:comment "The chunk from which this definition was extracted." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DATA PROPERTIES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Concept Properties
+# ───────────────────────────────────────────────────────────────────────────────
+
+syn:label a owl:DatatypeProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range xsd:string ;
+    rdfs:label "label" ;
+    rdfs:comment "Canonical label for the concept (lowercase, normalized)." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:altLabel a owl:DatatypeProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range xsd:string ;
+    rdfs:label "alternative label" ;
+    rdfs:comment "Alternative labels including synonyms, abbreviations, and variations." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:slug a owl:DatatypeProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range xsd:string ;
+    rdfs:label "slug" ;
+    rdfs:comment "URL-safe identifier for the concept." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Definition Properties
+# ───────────────────────────────────────────────────────────────────────────────
+
+syn:definitionText a owl:DatatypeProperty ;
+    rdfs:domain syn:Definition ;
+    rdfs:range xsd:string ;
+    rdfs:label "definition text" ;
+    rdfs:comment "The actual text of the definition." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Chunk Properties
+# ───────────────────────────────────────────────────────────────────────────────
+
+syn:chunkText a owl:DatatypeProperty ;
+    rdfs:domain syn:Chunk ;
+    rdfs:range xsd:string ;
+    rdfs:label "chunk text" ;
+    rdfs:comment "The text content of the chunk." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:chunkIndex a owl:DatatypeProperty ;
+    rdfs:domain syn:Chunk ;
+    rdfs:range xsd:integer ;
+    rdfs:label "chunk index" ;
+    rdfs:comment "Position of this chunk within its source document." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:timestampStart a owl:DatatypeProperty ;
+    rdfs:domain syn:Chunk ;
+    rdfs:range xsd:integer ;
+    rdfs:label "timestamp start" ;
+    rdfs:comment "Start timestamp in milliseconds (for video/audio sources)." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:timestampEnd a owl:DatatypeProperty ;
+    rdfs:domain syn:Chunk ;
+    rdfs:range xsd:integer ;
+    rdfs:label "timestamp end" ;
+    rdfs:comment "End timestamp in milliseconds (for video/audio sources)." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:vectorId a owl:DatatypeProperty ;
+    rdfs:domain syn:Chunk ;
+    rdfs:range xsd:string ;
+    rdfs:label "vector ID" ;
+    rdfs:comment "ID linking this chunk to its embedding in the vector store (Qdrant)." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Source Properties
+# ───────────────────────────────────────────────────────────────────────────────
+
+syn:sourceUrl a owl:DatatypeProperty ;
+    rdfs:domain syn:Source ;
+    rdfs:range xsd:anyURI ;
+    rdfs:label "source URL" ;
+    rdfs:comment "Original URL of the source content." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:sourceTitle a owl:DatatypeProperty ;
+    rdfs:domain syn:Source ;
+    rdfs:range xsd:string ;
+    rdfs:label "source title" ;
+    rdfs:comment "Title of the source content." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:sourceType a owl:DatatypeProperty ;
+    rdfs:domain syn:Source ;
+    rdfs:range xsd:string ;
+    rdfs:label "source type" ;
+    rdfs:comment "Type identifier for the source (youtube, web_article, note, etc.)." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:author a owl:DatatypeProperty ;
+    rdfs:domain syn:Source ;
+    rdfs:range xsd:string ;
+    rdfs:label "author" ;
+    rdfs:comment "Author or creator of the source content." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:channel a owl:DatatypeProperty ;
+    rdfs:domain syn:YouTubeSource ;
+    rdfs:range xsd:string ;
+    rdfs:label "channel" ;
+    rdfs:comment "YouTube channel name." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:duration a owl:DatatypeProperty ;
+    rdfs:domain syn:Source ;
+    rdfs:range xsd:integer ;
+    rdfs:label "duration" ;
+    rdfs:comment "Duration in seconds (for video/audio sources)." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Common Metadata Properties
+# ───────────────────────────────────────────────────────────────────────────────
+
+syn:confidence a owl:DatatypeProperty ;
+    rdfs:range xsd:float ;
+    rdfs:label "confidence" ;
+    rdfs:comment "Extraction confidence score between 0 and 1." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:createdAt a owl:DatatypeProperty ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "created at" ;
+    rdfs:comment "Timestamp when the entity was created in the knowledge graph." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:updatedAt a owl:DatatypeProperty ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "updated at" ;
+    rdfs:comment "Timestamp when the entity was last updated." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:documentId a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "document ID" ;
+    rdfs:comment "Reference to the parent document ID in MongoDB." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:userId a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "user ID" ;
+    rdfs:comment "Owner user ID (also encoded in the named graph URI)." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+

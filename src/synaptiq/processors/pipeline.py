@@ -12,6 +12,7 @@ from synaptiq.processors.base import BaseProcessor, Processor
 from synaptiq.processors.chunker import SemanticChunker
 from synaptiq.processors.concept_extractor import ConceptExtractor
 from synaptiq.processors.embedder import EmbeddingGenerator
+from synaptiq.processors.ontology_writer import OntologyWriter
 
 logger = structlog.get_logger(__name__)
 
@@ -22,7 +23,7 @@ class Pipeline:
     
     The pipeline transforms a CanonicalDocument through:
     1. Chunking: Document -> Chunk[]
-    2. Processing: Chunk[] -> Chunk[] (concept extraction, etc.)
+    2. Processing: Chunk[] -> Chunk[] (concept extraction, ontology writing, etc.)
     3. Embedding: Chunk[] -> ProcessedChunk[]
     """
 
@@ -37,11 +38,14 @@ class Pipeline:
         
         Args:
             chunker: Custom chunker (default: SemanticChunker)
-            processors: List of intermediate processors (default: [ConceptExtractor])
+            processors: List of intermediate processors (default: [ConceptExtractor, OntologyWriter])
             embedder: Custom embedder (default: EmbeddingGenerator)
         """
         self.chunker = chunker or SemanticChunker()
-        self.processors = processors if processors is not None else [ConceptExtractor()]
+        self.processors = processors if processors is not None else [
+            ConceptExtractor(),
+            OntologyWriter(),
+        ]
         self.embedder = embedder or EmbeddingGenerator()
 
         logger.info(
@@ -131,10 +135,48 @@ class Pipeline:
 
 def create_default_pipeline() -> Pipeline:
     """
-    Create a pipeline with default configuration.
+    Create a pipeline with full ontology support.
+    
+    Includes:
+    - SemanticChunker: Splits content into semantic chunks
+    - ConceptExtractor: Extracts concepts, definitions, and relationships
+    - OntologyWriter: Writes to RDF graph store (Fuseki)
+    - EmbeddingGenerator: Creates vector embeddings
     
     Returns:
-        Pipeline with SemanticChunker, ConceptExtractor, and EmbeddingGenerator
+        Pipeline with full processing including graph storage
+    """
+    return Pipeline(
+        chunker=SemanticChunker(),
+        processors=[
+            ConceptExtractor(),
+            OntologyWriter(),
+        ],
+        embedder=EmbeddingGenerator(),
+    )
+
+
+def create_pipeline_with_ontology() -> Pipeline:
+    """
+    Create a pipeline with ontology support (explicit name).
+    
+    Same as create_default_pipeline() but with explicit naming.
+    
+    Returns:
+        Pipeline with ConceptExtractor and OntologyWriter
+    """
+    return create_default_pipeline()
+
+
+def create_pipeline_without_ontology() -> Pipeline:
+    """
+    Create a pipeline without ontology/graph storage.
+    
+    Useful when you want concept extraction but don't have
+    Fuseki running or don't need graph storage.
+    
+    Returns:
+        Pipeline with ConceptExtractor only (no OntologyWriter)
     """
     return Pipeline(
         chunker=SemanticChunker(),
@@ -148,6 +190,7 @@ def create_pipeline_without_concepts() -> Pipeline:
     Create a pipeline without concept extraction.
     
     Useful if you don't need LLM-based extraction.
+    Just chunks and embeds content.
     
     Returns:
         Pipeline with SemanticChunker and EmbeddingGenerator only
@@ -159,3 +202,13 @@ def create_pipeline_without_concepts() -> Pipeline:
     )
 
 
+def create_minimal_pipeline() -> Pipeline:
+    """
+    Create a minimal pipeline for testing.
+    
+    Same as create_pipeline_without_concepts().
+    
+    Returns:
+        Pipeline with chunking and embedding only
+    """
+    return create_pipeline_without_concepts()

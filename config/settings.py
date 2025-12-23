@@ -40,6 +40,25 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = Field(default="redis://localhost:6379/0", description="Redis URL")
 
+    # Apache Fuseki (RDF Graph Store)
+    fuseki_url: str = Field(
+        default="http://localhost:3030", description="Apache Fuseki SPARQL endpoint URL"
+    )
+    fuseki_dataset: str = Field(
+        default="synaptiq", description="Fuseki dataset name"
+    )
+    fuseki_admin_user: str = Field(
+        default="admin", description="Fuseki admin username"
+    )
+    fuseki_admin_password: str = Field(
+        default="admin123", description="Fuseki admin password"
+    )
+    
+    # Ontology Configuration
+    ontology_base_uri: str = Field(
+        default="https://synaptiq.ai/", description="Base URI for ontology namespaces"
+    )
+
     # Embedding Configuration
     embedding_model: str = Field(
         default="text-embedding-3-small", description="OpenAI embedding model"

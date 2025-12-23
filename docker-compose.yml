@@ -1,5 +1,5 @@
 # Docker Compose for local development
-# Provides Redis for Celery broker
+# Provides Redis for Celery broker and Fuseki for RDF graph storage
 
 version: '3.8'
 
@@ -17,6 +17,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Apache Fuseki - SPARQL server with TDB2 backend for RDF graph storage
+  fuseki:
+    image: stain/jena-fuseki:latest
+    container_name: synaptiq-fuseki
+    ports:
+      - "3030:3030"
+    volumes:
+      - fuseki_data:/fuseki
+    environment:
+      - ADMIN_PASSWORD=${FUSEKI_ADMIN_PASSWORD:-admin123}
+      - JVM_ARGS=-Xmx2g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3030/$/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
 
   # Optional: Local MongoDB for development
   # Uncomment if you want to run MongoDB locally instead of Atlas
@@ -37,6 +56,7 @@ services:
 
 volumes:
   redis_data:
+  fuseki_data:
   # mongodb_data:
 
 
