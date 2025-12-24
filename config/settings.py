@@ -78,10 +78,28 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
 
-    # PostgreSQL (for Agent Sessions)
+    # PostgreSQL (for Agent Sessions and Auth)
     postgres_url: str = Field(
         default="postgresql+asyncpg://synaptiq:synaptiq123@localhost:5433/synaptiq_agents",
-        description="PostgreSQL URL for agent sessions"
+        description="PostgreSQL URL for agent sessions and auth"
+    )
+
+    # JWT Configuration
+    jwt_secret_key: str = Field(
+        default="your-super-secret-key-change-in-production",
+        description="Secret key for JWT encoding"
+    )
+    jwt_algorithm: str = Field(
+        default="HS256",
+        description="JWT encoding algorithm"
+    )
+    jwt_access_token_expire_minutes: int = Field(
+        default=15,
+        description="Access token expiration in minutes"
+    )
+    jwt_refresh_token_expire_days: int = Field(
+        default=7,
+        description="Refresh token expiration in days"
     )
 
 

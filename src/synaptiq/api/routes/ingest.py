@@ -1,15 +1,19 @@
 """
 Ingestion API routes.
+
+Supports both authenticated (JWT) and legacy (user_id in body) modes.
 """
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from synaptiq.adapters.base import AdapterFactory
 from synaptiq.api.dependencies import get_mongodb
+from synaptiq.api.middleware.auth import get_current_user_optional
 from synaptiq.core.schemas import Job, JobStatus, SourceType
+from synaptiq.domain.models import User
 from synaptiq.storage.mongodb import MongoDBStore
 from synaptiq.storage.qdrant import QdrantStore
 from synaptiq.workers.tasks import ingest_url_task
@@ -21,7 +25,10 @@ class IngestRequest(BaseModel):
     """Request body for ingestion."""
 
     url: str = Field(..., description="URL to ingest (YouTube video or web article)")
-    user_id: str = Field(..., description="User ID for multi-tenant isolation")
+    user_id: Optional[str] = Field(
+        None,
+        description="User ID (deprecated: use JWT authentication instead)",
+    )
     async_mode: bool = Field(
         default=True,
         description="If True, returns job ID immediately. If False, waits for completion.",
@@ -31,7 +38,6 @@ class IngestRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "url": "https://www.youtube.com/watch?v=aircAruvnKk",
-                "user_id": "user_123",
                 "async_mode": True,
             }
         }
@@ -55,16 +61,29 @@ class IngestSyncResponse(BaseModel):
     source_title: str = Field(..., description="Source title")
 
 
+def _get_user_id(request_body: IngestRequest, user: Optional[User]) -> str:
+    """Get user_id from JWT or request body (legacy)."""
+    if user:
+        return user.id
+    if request_body.user_id:
+        return request_body.user_id
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required. Provide JWT token or user_id in body.",
+    )
+
+
 @router.post(
     "",
     response_model=IngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest a URL",
-    description="Queue a URL for ingestion. Supports YouTube videos and web articles.",
+    description="Queue a URL for ingestion. Supports YouTube videos and web articles. Use JWT authentication or provide user_id in body (deprecated).",
 )
 async def ingest_url(
     request: IngestRequest,
     mongodb: MongoDBStore = Depends(get_mongodb),
+    user: Optional[User] = Depends(get_current_user_optional),
 ) -> IngestResponse:
     """
     Ingest a URL into the knowledge base.
@@ -73,7 +92,11 @@ async def ingest_url(
     - For web URLs: Scrapes article content
     
     Returns a job ID for tracking the ingestion status.
+    
+    Authentication: JWT token (preferred) or user_id in request body (deprecated).
     """
+    user_id = _get_user_id(request, user)
+    
     # Detect source type
     source_type = AdapterFactory.detect_source_type(request.url)
     if source_type is None:
@@ -83,7 +106,7 @@ async def ingest_url(
         )
 
     # Check if already ingested
-    existing_id = await mongodb.source_exists(request.url, request.user_id)
+    existing_id = await mongodb.source_exists(request.url, user_id)
     if existing_id:
         return IngestResponse(
             job_id="",
@@ -94,7 +117,7 @@ async def ingest_url(
 
     # Create job
     job = Job(
-        user_id=request.user_id,
+        user_id=user_id,
         source_url=request.url,
         source_type=source_type,
         status=JobStatus.PENDING,
@@ -105,7 +128,7 @@ async def ingest_url(
     ingest_url_task.delay(
         job_id=job.id,
         url=request.url,
-        user_id=request.user_id,
+        user_id=user_id,
         source_type=source_type.value,
     )
 
@@ -126,17 +149,22 @@ async def ingest_url(
 async def ingest_url_sync(
     request: IngestRequest,
     mongodb: MongoDBStore = Depends(get_mongodb),
+    user: Optional[User] = Depends(get_current_user_optional),
 ) -> IngestSyncResponse:
     """
     Ingest a URL synchronously (blocking).
     
     Warning: This can take a long time for large content.
     Prefer async mode for production use.
+    
+    Authentication: JWT token (preferred) or user_id in request body (deprecated).
     """
     from synaptiq.adapters.base import AdapterFactory
     from synaptiq.api.dependencies import get_qdrant
     from synaptiq.processors.pipeline import create_default_pipeline
 
+    user_id = _get_user_id(request, user)
+    
     # Detect source type
     source_type = AdapterFactory.detect_source_type(request.url)
     if source_type is None:
@@ -146,7 +174,7 @@ async def ingest_url_sync(
         )
 
     # Check if already ingested
-    existing_id = await mongodb.source_exists(request.url, request.user_id)
+    existing_id = await mongodb.source_exists(request.url, user_id)
     if existing_id:
         doc = await mongodb.get_source(existing_id)
         if doc:
@@ -160,7 +188,7 @@ async def ingest_url_sync(
     try:
         # Get adapter and ingest
         adapter = AdapterFactory.get_adapter(request.url)
-        document = await adapter.ingest(request.url, request.user_id)
+        document = await adapter.ingest(request.url, user_id)
 
         # Save to MongoDB
         await mongodb.save_source(document)

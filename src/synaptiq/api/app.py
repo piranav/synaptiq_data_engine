@@ -12,8 +12,10 @@ from fastapi.responses import JSONResponse
 
 from config.settings import get_settings
 from synaptiq.api.dependencies import cleanup_resources
-from synaptiq.api.routes import ingest, jobs, search, sources, chat
+from synaptiq.api.routes import auth, ingest, jobs, search, sources, chat, user
+from synaptiq.api.middleware.auth import AuthMiddleware
 from synaptiq.core.exceptions import SynaptiqError
+from synaptiq.infrastructure.database import close_db
 
 logger = structlog.get_logger(__name__)
 
@@ -31,6 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     # Shutdown
     logger.info("Shutting down Synaptiq Data Engine API")
     await cleanup_resources()
+    await close_db()
 
 
 def create_app() -> FastAPI:
@@ -49,6 +52,7 @@ def create_app() -> FastAPI:
         
         ## Features
         
+        - **Authentication** with JWT access/refresh tokens
         - **Ingest** content from YouTube videos and web articles
         - **Process** with semantic chunking and embeddings
         - **Search** your knowledge base with vector similarity
@@ -57,27 +61,37 @@ def create_app() -> FastAPI:
         
         ## Quick Start
         
-        1. **Ingest a YouTube video:**
+        1. **Create an account:**
+           ```
+           POST /api/v1/auth/signup
+           {"email": "you@example.com", "password": "yourpassword", "name": "Your Name"}
+           ```
+        
+        2. **Login to get tokens:**
+           ```
+           POST /api/v1/auth/login
+           {"email": "you@example.com", "password": "yourpassword"}
+           ```
+        
+        3. **Ingest a YouTube video (with JWT):**
            ```
            POST /ingest
-           {"url": "https://youtube.com/watch?v=...", "user_id": "your_id"}
+           Authorization: Bearer <access_token>
+           {"url": "https://youtube.com/watch?v=..."}
            ```
         
-        2. **Check job status:**
+        4. **Chat with your knowledge (with JWT):**
            ```
-           GET /jobs/{job_id}
-           ```
-        
-        3. **Chat with your knowledge:**
-           ```
-           POST /chat/{user_id}
+           POST /chat
+           Authorization: Bearer <access_token>
            {"query": "What is a tensor?", "session_id": "my-session"}
            ```
         
-        4. **Search your knowledge:**
+        5. **Search your knowledge (with JWT):**
            ```
            POST /search
-           {"query": "What is a tensor?", "user_id": "your_id"}
+           Authorization: Bearer <access_token>
+           {"query": "What is a tensor?"}
            ```
         """,
         version="0.1.0",
@@ -94,6 +108,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    # Auth middleware - validates JWT and attaches user to request
+    app.add_middleware(AuthMiddleware)
 
     # Exception handlers
     @app.exception_handler(SynaptiqError)
@@ -137,6 +154,8 @@ def create_app() -> FastAPI:
         )
 
     # Include routers
+    app.include_router(auth.router)
+    app.include_router(user.router)
     app.include_router(ingest.router)
     app.include_router(search.router)
     app.include_router(jobs.router)

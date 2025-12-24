@@ -1,5 +1,7 @@
 """
 Search API routes.
+
+Supports both authenticated (JWT) and legacy (user_id in body) modes.
 """
 
 from typing import Any, Optional
@@ -8,6 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from synaptiq.api.dependencies import get_embedder, get_qdrant
+from synaptiq.api.middleware.auth import get_current_user_optional
+from synaptiq.domain.models import User
 from synaptiq.processors.embedder import EmbeddingGenerator
 from synaptiq.storage.qdrant import QdrantStore
 
@@ -18,7 +22,10 @@ class SearchRequest(BaseModel):
     """Request body for search."""
 
     query: str = Field(..., description="Search query text", min_length=1)
-    user_id: str = Field(..., description="User ID for filtering")
+    user_id: Optional[str] = Field(
+        None,
+        description="User ID (deprecated: use JWT authentication instead)",
+    )
     limit: int = Field(default=10, ge=1, le=100, description="Maximum results")
     source_type: Optional[str] = Field(
         None,
@@ -43,11 +50,22 @@ class SearchRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "query": "What is a tensor?",
-                "user_id": "user_123",
                 "limit": 10,
                 "has_definition": True,
             }
         }
+
+
+def _get_user_id_for_search(request_body: SearchRequest, user: Optional[User]) -> str:
+    """Get user_id from JWT or request body (legacy)."""
+    if user:
+        return user.id
+    if request_body.user_id:
+        return request_body.user_id
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required. Provide JWT token or user_id in body.",
+    )
 
 
 class SearchResult(BaseModel):
@@ -78,12 +96,13 @@ class SearchResponse(BaseModel):
     "",
     response_model=SearchResponse,
     summary="Search knowledge base",
-    description="Semantic search across ingested content with filtering.",
+    description="Semantic search across ingested content with filtering. Use JWT authentication or provide user_id in body (deprecated).",
 )
 async def search(
     request: SearchRequest,
     qdrant: QdrantStore = Depends(get_qdrant),
     embedder: EmbeddingGenerator = Depends(get_embedder),
+    user: Optional[User] = Depends(get_current_user_optional),
 ) -> SearchResponse:
     """
     Search the knowledge base using semantic similarity.
@@ -93,7 +112,11 @@ async def search(
     - Multi-tenant filtering by user_id
     - Optional filters: source_type, has_definition, concepts
     - Score threshold for quality control
+    
+    Authentication: JWT token (preferred) or user_id in request body (deprecated).
     """
+    user_id = _get_user_id_for_search(request, user)
+    
     # Generate query embedding
     try:
         query_vector = await embedder.generate_single(request.query)
@@ -107,7 +130,7 @@ async def search(
     try:
         results = await qdrant.search(
             query_vector=query_vector,
-            user_id=request.user_id,
+            user_id=user_id,
             limit=request.limit,
             source_type=request.source_type,
             has_definition=request.has_definition,
@@ -158,29 +181,40 @@ async def search(
     "/definitions",
     response_model=SearchResponse,
     summary="Search for definitions",
-    description="Search specifically for definition chunks.",
+    description="Search specifically for definition chunks. Use JWT authentication or provide user_id query param (deprecated).",
 )
 async def search_definitions(
     query: str = Query(..., description="Concept to find definition for"),
-    user_id: str = Query(..., description="User ID"),
+    user_id: Optional[str] = Query(None, description="User ID (deprecated: use JWT)"),
     limit: int = Query(default=5, ge=1, le=20),
     qdrant: QdrantStore = Depends(get_qdrant),
     embedder: EmbeddingGenerator = Depends(get_embedder),
+    user: Optional[User] = Depends(get_current_user_optional),
 ) -> SearchResponse:
     """
     Search for definitions of a concept.
     
     Filters results to chunks marked as containing definitions.
     Useful for "What is X?" style queries.
+    
+    Authentication: JWT token (preferred) or user_id query param (deprecated).
     """
+    # Determine user_id from JWT or query param
+    effective_user_id = user.id if user else user_id
+    if not effective_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Provide JWT token or user_id query param.",
+        )
+    
     request = SearchRequest(
         query=f"definition of {query}",
-        user_id=user_id,
+        user_id=effective_user_id,
         limit=limit,
         has_definition=True,
         score_threshold=0.4,
     )
 
-    return await search(request, qdrant, embedder)
+    return await search(request, qdrant, embedder, user)
 
 

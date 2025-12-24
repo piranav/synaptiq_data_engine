@@ -1,0 +1,20 @@
+Generic single-database configuration with async engine support.
+
+This directory contains Alembic database migration scripts for Synaptiq.
+
+Usage:
+    # Generate a new migration
+    alembic revision --autogenerate -m "Description of changes"
+    
+    # Apply all pending migrations
+    alembic upgrade head
+    
+    # Rollback one migration
+    alembic downgrade -1
+    
+    # Show current revision
+    alembic current
+    
+    # Show migration history
+    alembic history
+
