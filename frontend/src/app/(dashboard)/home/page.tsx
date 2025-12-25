@@ -1,13 +1,19 @@
+"use client";
+
 import { QuickCapture } from "@/components/dashboard/QuickCapture";
 import { StatsRow } from "@/components/dashboard/StatsRow";
 import { RecentActivity } from "@/components/dashboard/RecentActivity";
 import { PoincareDisk } from "@/components/graph/PoincareDisk";
 import Link from "next/link";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function HomePage() {
+    const { user } = useAuth();
+    const firstName = user?.name?.split(" ")[0] || "there";
+
     return (
         <div className="max-w-[960px] mx-auto w-full animation-fade-in-up">
-            <h1 className="text-title-1 mb-8">Good morning, Piranava</h1>
+            <h1 className="text-title-1 mb-8">Good morning, {firstName}</h1>
 
             <QuickCapture />
 

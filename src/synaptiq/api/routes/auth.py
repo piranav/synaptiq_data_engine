@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from synaptiq.infrastructure.database import get_async_session
 from synaptiq.services.auth_service import AuthError, AuthService
+from synaptiq.workers.tasks import onboard_user_task
 
 logger = structlog.get_logger(__name__)
 
@@ -174,6 +175,10 @@ async def signup(
             user_agent=user_agent,
             ip_address=ip_address,
         )
+        
+        # Trigger async graph provisioning for the new user
+        onboard_user_task.delay(user.id)
+        logger.info("Triggered graph provisioning", user_id=user.id)
         
         return AuthResponse(
             user=user_to_response(user),

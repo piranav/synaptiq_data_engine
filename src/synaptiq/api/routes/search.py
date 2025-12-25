@@ -15,7 +15,7 @@ from synaptiq.domain.models import User
 from synaptiq.processors.embedder import EmbeddingGenerator
 from synaptiq.storage.qdrant import QdrantStore
 
-router = APIRouter(prefix="/search", tags=["Search"])
+router = APIRouter(prefix="/api/v1/search", tags=["Search"])
 
 
 class SearchRequest(BaseModel):

@@ -1,5 +1,7 @@
 """
 Job status API routes.
+
+All endpoints require JWT authentication.
 """
 
 from typing import Optional
@@ -8,10 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from synaptiq.api.dependencies import get_mongodb
+from synaptiq.api.middleware.auth import get_current_user
 from synaptiq.core.schemas import Job, JobStatus
+from synaptiq.domain.models import User
 from synaptiq.storage.mongodb import MongoDBStore
 
-router = APIRouter(prefix="/jobs", tags=["Jobs"])
+router = APIRouter(prefix="/api/v1/jobs", tags=["Jobs"])
 
 
 class JobResponse(BaseModel):
@@ -62,18 +66,27 @@ def job_to_response(job: Job) -> JobResponse:
 )
 async def get_job(
     job_id: str,
+    user: User = Depends(get_current_user),
     mongodb: MongoDBStore = Depends(get_mongodb),
 ) -> JobResponse:
     """
     Get the status of a specific ingestion job.
     
     Use this to poll for job completion after calling /ingest.
+    Requires JWT authentication.
     """
     job = await mongodb.get_job(job_id)
     if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job not found: {job_id}",
+        )
+    
+    # Verify ownership
+    if job.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access this job",
         )
 
     return job_to_response(job)
@@ -83,10 +96,10 @@ async def get_job(
     "",
     response_model=JobListResponse,
     summary="List jobs",
-    description="List ingestion jobs for a user.",
+    description="List ingestion jobs for the authenticated user.",
 )
 async def list_jobs(
-    user_id: str = Query(..., description="User ID"),
+    user: User = Depends(get_current_user),
     status_filter: Optional[str] = Query(
         None,
         alias="status",
@@ -96,9 +109,10 @@ async def list_jobs(
     mongodb: MongoDBStore = Depends(get_mongodb),
 ) -> JobListResponse:
     """
-    List all ingestion jobs for a user.
+    List all ingestion jobs for the authenticated user.
     
     Optionally filter by job status.
+    Requires JWT authentication.
     """
     # Parse status filter
     job_status = None
@@ -111,7 +125,7 @@ async def list_jobs(
                 detail=f"Invalid status. Must be one of: {[s.value for s in JobStatus]}",
             )
 
-    jobs = await mongodb.list_jobs(user_id, status=job_status, limit=limit)
+    jobs = await mongodb.list_jobs(user.id, status=job_status, limit=limit)
 
     return JobListResponse(
         jobs=[job_to_response(job) for job in jobs],
@@ -127,7 +141,7 @@ async def list_jobs(
 )
 async def delete_job(
     job_id: str,
-    user_id: str = Query(..., description="User ID for verification"),
+    user: User = Depends(get_current_user),
     mongodb: MongoDBStore = Depends(get_mongodb),
 ) -> None:
     """
@@ -135,6 +149,7 @@ async def delete_job(
     
     Note: This only deletes the job tracking record.
     If the job has already processed content, the content remains.
+    Requires JWT authentication.
     """
     job = await mongodb.get_job(job_id)
     if not job:
@@ -143,7 +158,7 @@ async def delete_job(
             detail=f"Job not found: {job_id}",
         )
 
-    if job.user_id != user_id:
+    if job.user_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this job",

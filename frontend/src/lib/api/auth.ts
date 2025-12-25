@@ -30,6 +30,28 @@ export interface AuthError {
 }
 
 class AuthService {
+    // Local storage keys
+    private readonly TOKEN_KEY = "synaptiq_tokens";
+    private readonly USER_KEY = "synaptiq_user";
+
+    private getTokens(): Tokens | null {
+        if (typeof window === "undefined") return null;
+        const stored = localStorage.getItem(this.TOKEN_KEY);
+        return stored ? JSON.parse(stored) : null;
+    }
+
+    private setSession(response: AuthResponse) {
+        if (typeof window === "undefined") return;
+        localStorage.setItem(this.TOKEN_KEY, JSON.stringify(response.tokens));
+        localStorage.setItem(this.USER_KEY, JSON.stringify(response.user));
+    }
+
+    private clearSession() {
+        if (typeof window === "undefined") return;
+        localStorage.removeItem(this.TOKEN_KEY);
+        localStorage.removeItem(this.USER_KEY);
+    }
+
     async signup(data: { email: string; password: string; name?: string }): Promise<AuthResponse> {
         const res = await fetch(`${API_BASE_URL}/auth/signup`, {
             method: "POST",
@@ -42,7 +64,9 @@ class AuthService {
             throw new Error(error.detail?.message || "Signup failed");
         }
 
-        return res.json();
+        const response = await res.json();
+        this.setSession(response);
+        return response;
     }
 
     async login(data: { email: string; password: string }): Promise<AuthResponse> {
@@ -57,7 +81,34 @@ class AuthService {
             throw new Error(error.detail?.message || "Login failed");
         }
 
-        return res.json();
+        const response = await res.json();
+        this.setSession(response);
+        return response;
+    }
+
+    async logout(): Promise<void> {
+        const tokens = this.getTokens();
+
+        // Try to notify backend, but always clear local session
+        if (tokens?.refresh_token) {
+            try {
+                await fetch(`${API_BASE_URL}/auth/logout`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+                });
+            } catch (e) {
+                console.error("Logout API call failed", e);
+            }
+        }
+
+        this.clearSession();
+    }
+
+    getUser(): User | null {
+        if (typeof window === "undefined") return null;
+        const stored = localStorage.getItem(this.USER_KEY);
+        return stored ? JSON.parse(stored) : null;
     }
 }
 

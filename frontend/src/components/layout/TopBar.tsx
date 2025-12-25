@@ -2,11 +2,18 @@
 
 import { Search, Bell, User } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/contexts/AuthContext";
 
 export function TopBar() {
     const pathname = usePathname();
+    const { user } = useAuth();
+
     const title = pathname.split("/")[1] || "Home";
     const displayTitle = title.charAt(0).toUpperCase() + title.slice(1);
+
+    const initials = user?.name
+        ? user.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()
+        : "PK";
 
     return (
         <header className="h-[56px] pl-[64px] pr-8 flex items-center justify-between border-b border-border bg-white/80 backdrop-blur-md sticky top-0 z-40">
@@ -27,7 +34,7 @@ export function TopBar() {
                 </button>
 
                 <button className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white text-xs font-semibold ring-2 ring-transparent hover:ring-offset-2 hover:ring-accent transition-all">
-                    PK
+                    {initials}
                 </button>
             </div>
         </header>

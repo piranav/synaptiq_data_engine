@@ -22,7 +22,7 @@ from synaptiq.domain.models import User
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 
 # =============================================================================
