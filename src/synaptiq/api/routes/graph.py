@@ -35,7 +35,10 @@ class GraphNode(BaseModel):
     
     id: str = Field(..., description="Unique node identifier (URI)")
     label: str = Field(..., description="Display label")
-    type: str = Field(default="concept", description="Node type: concept, definition, source")
+    type: str = Field(default="concept", description="Legacy type field")
+    nodeType: str = Field(default="instance", description="class or instance")
+    entityType: str = Field(default="concept", description="concept, definition, source, chunk")
+    sourceType: Optional[str] = Field(None, description="youtube, web_article, note, pdf (if entityType=source)")
     size: float = Field(default=10, description="Node size based on connections")
     x: float = Field(default=0, description="X position (Poincaré coordinate)")
     y: float = Field(default=0, description="Y position (Poincaré coordinate)")
@@ -50,8 +53,8 @@ class GraphEdge(BaseModel):
     source: str = Field(..., description="Source node ID")
     target: str = Field(..., description="Target node ID")
     type: str = Field(..., description="Relationship type: isA, partOf, relatedTo, etc.")
+    label: str = Field(default="", description="Human-readable edge label")
     weight: float = Field(default=1.0, description="Edge weight")
-    label: Optional[str] = Field(None, description="Edge label")
 
 
 class GraphStats(BaseModel):
@@ -73,15 +76,44 @@ class FullGraphResponse(BaseModel):
     stats: GraphStats = Field(default_factory=GraphStats)
 
 
+class RelationshipTarget(BaseModel):
+    """A target node in a relationship."""
+    
+    uri: str = Field(..., description="Target node URI")
+    label: str = Field(..., description="Target node label")
+    nodeType: str = Field(default="instance", description="class or instance")
+    entityType: str = Field(default="concept", description="concept, definition, source")
+
+
 class NeighborhoodResponse(BaseModel):
     """Response for concept neighborhood."""
     
     found: bool
     uri: str
     label: str
+    nodeType: str = Field(default="instance", description="class or instance")
+    entityType: str = Field(default="concept", description="concept, definition, source")
+    sourceType: Optional[str] = Field(None, description="Source type if entityType=source")
     definition: Optional[str] = None
     source: Optional[dict] = None
     relationships: dict[str, list[str]] = Field(default_factory=dict)
+    richRelationships: dict[str, list[RelationshipTarget]] = Field(
+        default_factory=dict,
+        description="Relationships with full target metadata"
+    )
+
+
+class JITTreeNode(BaseModel):
+    """Node structure for JIT Hypertree visualization (Poincare disk)."""
+    
+    id: str = Field(..., description="Unique node identifier")
+    name: str = Field(..., description="Display name")
+    data: dict[str, Any] = Field(default_factory=dict, description="Node visual properties")
+    children: list["JITTreeNode"] = Field(default_factory=list, description="Child nodes")
+
+
+# Allow forward reference
+JITTreeNode.model_rebuild()
 
 
 class ConceptDetail(BaseModel):
@@ -234,6 +266,9 @@ async def get_full_graph(
                     "id": node_id,
                     "label": c.get("label", ""),
                     "type": "concept",
+                    "nodeType": "instance",
+                    "entityType": "concept",
+                    "sourceType": None,
                     "has_definition": c.get("hasDefinition", "false") == "true",
                 })
                 node_ids.add(node_id)
@@ -254,6 +289,16 @@ async def get_full_graph(
         
         relationships = await graph_manager.fuseki.query(user.id, edges_sparql)
         
+        # Human-readable labels for relationship types
+        REL_LABELS = {
+            "isA": "is a",
+            "partOf": "part of",
+            "prerequisiteFor": "prerequisite for",
+            "relatedTo": "related to",
+            "oppositeOf": "opposite of",
+            "usedIn": "used in",
+        }
+        
         # Build edges
         edges = []
         edge_ids = set()
@@ -271,6 +316,7 @@ async def get_full_graph(
                         "source": source,
                         "target": target,
                         "type": rel_type,
+                        "label": REL_LABELS.get(rel_type, rel_type),
                         "weight": 1.0,
                     })
                     edge_ids.add(edge_id)
@@ -611,21 +657,20 @@ async def get_concept_subgraph(
 
 @router.get(
     "/neighborhood",
-    response_model=NeighborhoodResponse,
-    summary="Get concept neighborhood (legacy)",
-    description="Get a concept and its immediate neighborhood. Use /concepts/{id}/neighborhood for visualization data.",
+    summary="Get concept neighborhood or JIT tree for root",
+    description="Get a concept neighborhood or full JIT tree for Poincare disk visualization.",
 )
 async def get_neighborhood(
-    concept_label: Optional[str] = Query(None, description="Label of the concept"),
+    concept_label: Optional[str] = Query(None, description="Label of the concept (omit for root tree)"),
     user_id: Optional[str] = Query(None, description="User ID (deprecated: use JWT)"),
     user: Optional[User] = Depends(get_current_user_optional),
     graph_manager: GraphManager = Depends(get_graph_manager),
-) -> NeighborhoodResponse:
+):
     """
-    Get graph neighborhood for a concept by label.
+    Get graph neighborhood for a concept by label, or JIT tree for root view.
     
-    This is a legacy endpoint. For visualization, use GET /graph/full or
-    GET /graph/concepts/{id}/neighborhood.
+    If concept_label is provided: returns NeighborhoodResponse with concept details.
+    If concept_label is omitted: returns JITTreeNode with full nested tree for Poincare disk.
     """
     effective_user_id = user.id if user else user_id
     if not effective_user_id:
@@ -647,14 +692,29 @@ async def get_neighborhood(
         )
         
         if not data:
-            return NeighborhoodResponse(
-                found=False,
-                uri="",
-                label=concept_label or "Root",
-                relationships={}
-            )
+            # Return empty tree for root, empty neighborhood for concept
+            if concept_label is None:
+                return {
+                    "id": f"synaptiq:root:{effective_user_id}",
+                    "name": "Knowledge Graph",
+                    "data": {"relation": "root", "$color": "#1A1A1A", "$dim": 28},
+                    "children": []
+                }
+            return {
+                "found": False,
+                "uri": "",
+                "label": concept_label,
+                "relationships": {}
+            }
 
-        return NeighborhoodResponse(**data)
+        # Root view returns JIT tree, concept view returns neighborhood
+        # Check if it's a JIT tree format (has 'id' and 'children' keys)
+        if "id" in data and "children" in data and "name" in data:
+            # JIT tree format - return as-is
+            return data
+        else:
+            # Neighborhood format - return as NeighborhoodResponse
+            return data
         
     except Exception as e:
         logger.error(

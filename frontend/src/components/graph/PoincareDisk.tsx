@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useId, useCallback } from "react";
 import { graphApi, GraphNeighborhood } from "@/lib/api/graph";
-import { transformToJITFormat } from "@/lib/graph/adapter";
+import { transformToJITFormat, SWISS_COLORS } from "@/lib/graph/adapter";
+import { GraphLegend } from "@/components/graph/GraphLegend";
 
 // We need to tell TS about $jit on window if we import it
 declare global {
@@ -45,10 +46,10 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
         loadJit();
     }, []);
 
-    // Fetch neighborhood data
-    const fetchNeighborhood = useCallback(async (conceptLabel: string | null): Promise<GraphNeighborhood | null> => {
-        const cacheKey = conceptLabel || '__root__';
-        
+    // Fetch neighborhood data for a specific concept (not root)
+    const fetchNeighborhood = useCallback(async (conceptLabel: string): Promise<GraphNeighborhood | null> => {
+        const cacheKey = conceptLabel;
+
         // Check cache first
         if (graphDataCache.current.has(cacheKey)) {
             return graphDataCache.current.get(cacheKey)!;
@@ -56,7 +57,7 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
 
         try {
             setLoading(true);
-            const data = await graphApi.getNeighborhood(conceptLabel || undefined);
+            const data = await graphApi.getNeighborhood(conceptLabel);
             if (data) {
                 graphDataCache.current.set(cacheKey, data);
             }
@@ -85,15 +86,15 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
 
         // Fetch the clicked node's neighborhood
         const data = await fetchNeighborhood(nodeName);
-        
+
         if (data && htRef.current) {
             const jitJson = transformToJITFormat(data, null);
             console.log("Loading neighborhood for:", nodeName, jitJson);
-            
+
             htRef.current.loadJSON(jitJson);
             htRef.current.refresh();
             htRef.current.controller.onComplete();
-            
+
             setCurrentCenter(nodeName);
         }
 
@@ -110,16 +111,29 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
         const previousCenter = navigationStack[navigationStack.length - 1];
         setNavigationStack(prev => prev.slice(0, -1));
 
-        const conceptLabel = previousCenter === '__root__' ? null : previousCenter;
-        const data = await fetchNeighborhood(conceptLabel);
-
-        if (data && htRef.current) {
-            const jitJson = transformToJITFormat(data, null);
-            htRef.current.loadJSON(jitJson);
-            htRef.current.refresh();
-            htRef.current.controller.onComplete();
-            
-            setCurrentCenter(conceptLabel);
+        if (previousCenter === '__root__') {
+            // Go back to root - reload the JIT tree
+            try {
+                const jitTree = await graphApi.getJITTree();
+                if (jitTree && htRef.current) {
+                    htRef.current.loadJSON(jitTree);
+                    htRef.current.refresh();
+                    htRef.current.controller.onComplete();
+                }
+            } catch (err) {
+                console.error("Failed to reload root tree:", err);
+            }
+            setCurrentCenter(null);
+        } else {
+            // Go back to a specific concept
+            const data = await fetchNeighborhood(previousCenter);
+            if (data && htRef.current) {
+                const jitJson = transformToJITFormat(data, null);
+                htRef.current.loadJSON(jitJson);
+                htRef.current.refresh();
+                htRef.current.controller.onComplete();
+                setCurrentCenter(previousCenter);
+            }
         }
     }, [navigationStack, fetchNeighborhood]);
 
@@ -134,38 +148,52 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
             const w = infovis.offsetWidth - 50;
             const h = infovis.offsetHeight - 50;
 
-            // Create Hypertree instance
+            // Create Hypertree instance with Swiss design styling
             const ht = new window.$jit.Hypertree({
                 injectInto: containerId.current,
                 width: w,
                 height: h,
                 Node: {
-                    dim: 16,
-                    color: "#6366F1",
+                    dim: 14,
+                    color: SWISS_COLORS.concept,
                     overridable: true,
                     type: 'circle'
                 },
                 Edge: {
-                    lineWidth: 2,
-                    color: "#F59E0B",
+                    lineWidth: 1.5,
+                    color: "#555555",  // Muted gray for Swiss style
                     overridable: true
                 },
                 onBeforeCompute: function (node: any) {
                     // Called before centering on a node
                 },
                 onCreateLabel: function (domElement: HTMLElement, node: any) {
-                    domElement.innerHTML = node.name;
-                    domElement.style.cursor = "pointer";
-                    
-                    // Double-click to drill down
-                    domElement.ondblclick = function (e) {
+                    // Build label with relationship type if available
+                    const relLabel = node.data?.relationLabel;
+                    const isClickable = node.id !== 'empty_placeholder' && !node.id.startsWith('synaptiq:root:');
+
+                    let labelHtml = '';
+                    if (relLabel && node._depth > 0) {
+                        labelHtml = `<span class="node-label">${node.name}</span><span class="rel-type">${relLabel}</span>`;
+                    } else {
+                        labelHtml = node.name;
+                    }
+
+                    // Add visual drill hint for child nodes
+                    if (isClickable && node._depth > 0) {
+                        labelHtml += `<span class="drill-hint">▸</span>`;
+                    }
+
+                    domElement.innerHTML = labelHtml;
+                    domElement.style.cursor = isClickable ? "pointer" : "default";
+
+                    // Single click: Animate to center on this node (hyperbolic animation)
+                    // The multi-level tree is preserved - no data replacement
+                    domElement.onclick = function (e) {
                         e.preventDefault();
                         e.stopPropagation();
-                        handleNodeClick(node.id, node.name);
-                    };
-                    
-                    // Single click just centers
-                    domElement.onclick = function () {
+
+                        // Animate to center on this node - tree structure stays intact
                         ht.onClick(node.id, {
                             onComplete: function () {
                                 ht.controller.onComplete();
@@ -178,20 +206,41 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
                     style.display = "";
                     style.cursor = "pointer";
                     style.color = "#FFFFFF";
-                    style.fontFamily = "SF Pro Display, Inter, sans-serif";
+                    style.fontFamily = "'SF Pro Display', 'Inter', -apple-system, sans-serif";
                     style.fontSize = "12px";
                     style.fontWeight = "500";
+                    style.letterSpacing = "-0.01em";
                     style.pointerEvents = "auto";
-                    style.textShadow = "0 1px 2px rgba(0,0,0,0.8)";
+                    style.textShadow = "0 1px 3px rgba(0,0,0,0.9)";
+
+                    // Style the relationship type label
+                    const relTypeEl = domElement.querySelector('.rel-type') as HTMLElement;
+                    if (relTypeEl) {
+                        relTypeEl.style.display = 'block';
+                        relTypeEl.style.fontSize = '9px';
+                        relTypeEl.style.fontWeight = '400';
+                        relTypeEl.style.color = 'rgba(255,255,255,0.5)';
+                        relTypeEl.style.marginTop = '2px';
+                    }
+
+                    // Style the drill hint arrow
+                    const drillHint = domElement.querySelector('.drill-hint') as HTMLElement;
+                    if (drillHint) {
+                        drillHint.style.display = 'inline';
+                        drillHint.style.marginLeft = '4px';
+                        drillHint.style.fontSize = '10px';
+                        drillHint.style.color = 'rgba(10, 132, 255, 0.8)';
+                    }
 
                     if (node._depth <= 1) {
                         style.position = 'absolute';
                         const left = parseInt(style.left);
                         const width = domElement.offsetWidth;
                         style.left = (left - width / 2) + 'px';
+                        style.fontWeight = '600';
                     } else if (node._depth === 2) {
                         style.fontSize = "10px";
-                        style.opacity = "0.7";
+                        style.opacity = "0.8";
                     } else {
                         style.display = "none";
                     }
@@ -203,31 +252,57 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
 
             htRef.current = ht;
 
-            // Load initial data
-            const data = await fetchNeighborhood(currentCenter);
-            
-            if (data) {
-                const jitJson = transformToJITFormat(data, null);
-                console.log("Initial graph data:", jitJson);
-                
-                ht.loadJSON(jitJson);
-                ht.refresh();
-                ht.controller.onComplete();
-            } else {
-                // Load empty state
+            // Load initial data - backend now returns JIT-compatible tree structure directly
+            try {
+                setLoading(true);
+                // Fetch the JIT-compatible tree directly
+                const jitTree = await graphApi.getJITTree();
+                console.log("JIT Tree loaded:", jitTree);
+
+                if (jitTree && jitTree.id && jitTree.children) {
+                    // Tree is already in JIT format, load directly
+                    ht.loadJSON(jitTree);
+                    ht.refresh();
+                    ht.controller.onComplete();
+                } else {
+                    // Fallback: try old format with transformation (only for specific concepts)
+                    if (currentCenter) {
+                        const data = await fetchNeighborhood(currentCenter);
+                        if (data && 'found' in data) {
+                            const jitJson = transformToJITFormat(data as any, null);
+                            ht.loadJSON(jitJson);
+                            ht.refresh();
+                            ht.controller.onComplete();
+                        }
+                    } else {
+                        // Load empty state
+                        const emptyState = {
+                            id: 'empty',
+                            name: 'No Data',
+                            data: { $color: '#4B5563', $dim: 20 },
+                            children: [{
+                                id: 'hint',
+                                name: 'Ingest content to build your graph',
+                                data: { $color: '#6B7280', $dim: 10 },
+                                children: []
+                            }]
+                        };
+                        ht.loadJSON(emptyState);
+                        ht.refresh();
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to load graph data:", err);
                 const emptyState = {
                     id: 'empty',
-                    name: 'No Data',
-                    data: { $color: '#4B5563', $dim: 20 },
-                    children: [{
-                        id: 'hint',
-                        name: 'Ingest content to build your graph',
-                        data: { $color: '#6B7280', $dim: 10 },
-                        children: []
-                    }]
+                    name: 'Error loading graph',
+                    data: { $color: '#EF4444', $dim: 20 },
+                    children: []
                 };
                 ht.loadJSON(emptyState);
                 ht.refresh();
+            } finally {
+                setLoading(false);
             }
         };
 
@@ -270,14 +345,21 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
 
             {/* Instructions */}
             <div className="absolute bottom-4 left-4 z-20 text-white/40 text-xs">
-                <span>Click to center • Double-click to explore</span>
+                <span>Click a concept to explore its relationships</span>
             </div>
 
+            {/* Legend - positioned bottom right */}
+            {!isPreview && (
+                <div className="absolute bottom-4 right-4 z-20">
+                    <GraphLegend compact />
+                </div>
+            )}
+
             {/* Canvas Container */}
-            <div 
-                id={containerId.current} 
-                className="w-full h-full flex justify-center items-center" 
-                style={{ margin: '0 auto', position: 'relative' }} 
+            <div
+                id={containerId.current}
+                className="w-full h-full flex justify-center items-center"
+                style={{ margin: '0 auto', position: 'relative' }}
             />
 
             {/* Loading State */}

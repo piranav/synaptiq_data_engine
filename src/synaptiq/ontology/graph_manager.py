@@ -225,59 +225,141 @@ class GraphManager:
 
     async def _get_root_concepts(self, user_id: str) -> dict[str, Any]:
         """
-        Get top-level concepts for the user's graph (root view).
+        Build a deeply nested tree structure for JIT Hypertree visualization.
         
-        Returns concepts that have outgoing relationships but fewer incoming ones,
-        or simply the most connected concepts as starting points for exploration.
-        
-        Args:
-            user_id: User identifier
-            
-        Returns:
-            Dict with a virtual "root" node and top-level concepts as relationships
+        Returns a tree with structure matching JIT requirements:
+        {
+            "id": "root",
+            "name": "Knowledge Graph",
+            "data": {...},
+            "children": [
+                {
+                    "id": "concept1",
+                    "name": "Concept 1",
+                    "data": {...},
+                    "children": [
+                        { "id": "...", "name": "Related", "data": {...}, "children": [] }
+                    ]
+                }
+            ]
+        }
         """
-        # Get top concepts by number of relationships
+        # Get all concepts with their relationships in one query
         sparql = """
-        SELECT ?concept ?label (COUNT(?related) AS ?connections)
+        SELECT ?concept ?label ?relType ?relatedConcept ?relatedLabel
         WHERE {
             ?concept a syn:Concept ;
                      syn:label ?label .
             OPTIONAL {
-                { ?concept ?rel ?related . ?related a syn:Concept . }
-                UNION
-                { ?related ?rel ?concept . ?related a syn:Concept . }
+                ?concept ?relType ?relatedConcept .
+                ?relatedConcept a syn:Concept ;
+                                syn:label ?relatedLabel .
+                FILTER(?relType IN (
+                    syn:isA, syn:partOf, syn:prerequisiteFor, 
+                    syn:relatedTo, syn:oppositeOf, syn:usedIn
+                ))
             }
         }
-        GROUP BY ?concept ?label
-        ORDER BY DESC(?connections)
-        LIMIT 20
+        ORDER BY ?label
         """
         
         try:
             results = await self.fuseki.query(user_id, sparql)
             
-            # Extract concept labels as "children" of root
-            top_concepts = [r.get("label", "") for r in results if r.get("label")]
+            # Build concept -> relationships mapping
+            concept_map: dict[str, dict] = {}
             
-            return {
-                "found": True,
-                "uri": f"synaptiq:root:{user_id}",
-                "label": "Knowledge Graph",
-                "definition": "Your personal knowledge graph. Click on concepts to explore.",
-                "source": None,
-                "relationships": {
-                    "contains": top_concepts,
-                },
+            for r in results:
+                label = r.get("label", "")
+                if not label:
+                    continue
+                
+                concept_uri = r.get("concept", "")
+                
+                if label not in concept_map:
+                    concept_map[label] = {
+                        "uri": concept_uri,
+                        "label": label,
+                        "children": {}  # relType -> list of related labels
+                    }
+                
+                rel_type = r.get("relType", "").split("#")[-1]
+                related_label = r.get("relatedLabel", "")
+                
+                if rel_type and related_label:
+                    if rel_type not in concept_map[label]["children"]:
+                        concept_map[label]["children"][rel_type] = []
+                    if related_label not in concept_map[label]["children"][rel_type]:
+                        concept_map[label]["children"][rel_type].append(related_label)
+            
+            # Relationship type labels
+            REL_LABELS = {
+                "isA": "is a",
+                "partOf": "part of",
+                "prerequisiteFor": "prerequisite for",
+                "relatedTo": "related to",
+                "oppositeOf": "opposite of",
+                "usedIn": "used in",
+                "contains": "contains",
             }
+            
+            # Build JIT tree structure: Root -> Concepts -> Related Concepts
+            jit_children = []
+            
+            for concept_label in sorted(concept_map.keys())[:30]:  # Top 30 concepts
+                concept_data = concept_map[concept_label]
+                
+                # Build grandchildren (related concepts)
+                grandchildren = []
+                for rel_type, related_labels in concept_data["children"].items():
+                    for related_label in related_labels[:8]:  # Max 8 per relationship
+                        grandchildren.append({
+                            "id": f"{concept_label}#{rel_type}#{related_label}".replace(" ", "_"),
+                            "name": related_label,
+                            "data": {
+                                "relation": REL_LABELS.get(rel_type, rel_type),
+                                "$color": "#0066CC",
+                                "$dim": 10,
+                            },
+                            "children": []  # Leaf nodes
+                        })
+                
+                # Build child (concept)
+                jit_children.append({
+                    "id": f"concept_{concept_label}".replace(" ", "_"),
+                    "name": concept_label,
+                    "data": {
+                        "relation": "contains",
+                        "$color": "#0066CC",
+                        "$dim": 14,
+                    },
+                    "children": grandchildren
+                })
+            
+            # Return JIT-compatible nested tree
+            return {
+                "id": f"synaptiq:root:{user_id}",
+                "name": "Knowledge Graph",
+                "data": {
+                    "relation": "root",
+                    "$color": "#1A1A1A",
+                    "$dim": 28,
+                },
+                "children": jit_children
+            }
+            
         except Exception as e:
             logger.warning("Failed to get root concepts", user_id=user_id, error=str(e))
             return {
-                "found": True,
-                "uri": f"synaptiq:root:{user_id}",
-                "label": "Knowledge Graph",
-                "definition": "Your knowledge graph is empty. Start by ingesting some content!",
-                "source": None,
-                "relationships": {},
+                "id": f"synaptiq:root:{user_id}",
+                "name": "Knowledge Graph",
+                "data": {"relation": "root", "$color": "#1A1A1A", "$dim": 28},
+                "children": [{
+                    "id": "empty",
+                    "name": "Ingest content to build your graph",
+                    "data": {"$color": "#666666", "$dim": 10},
+                    "children": []
+                }]
             }
 
     async def get_concept_neighborhood(
@@ -335,7 +417,7 @@ class GraphManager:
         
         # Organize by relationship type
         outgoing: dict[str, list[str]] = {}
-        incoming: dict[str, list[str]] = {}
+        rich_outgoing: dict[str, list[dict]] = {}
         
         for rel in relationships:
             rel_type = rel.get("relationType", "").split("#")[-1]
@@ -347,18 +429,29 @@ class GraphManager:
             if rel_type and related_label:
                 if rel_type not in outgoing:
                     outgoing[rel_type] = []
+                    rich_outgoing[rel_type] = []
                 outgoing[rel_type].append(related_label)
+                rich_outgoing[rel_type].append({
+                    "uri": related_uri,
+                    "label": related_label,
+                    "nodeType": "instance",
+                    "entityType": "concept",
+                })
         
         return {
             "found": True,
             "uri": concept_uri,
             "label": details.get("label") if details else concept_label,
+            "nodeType": "instance",
+            "entityType": "concept",
+            "sourceType": None,
             "definition": details.get("definitionText") if details else None,
             "source": {
                 "title": details.get("sourceTitle") if details else None,
                 "url": details.get("sourceUrl") if details else None,
             },
             "relationships": outgoing,
+            "richRelationships": rich_outgoing,
         }
 
     async def find_learning_path(
