@@ -1,13 +1,17 @@
 """
-Notes adapter for local markdown files (Obsidian, etc.)
-This is a placeholder for future implementation.
+Notes adapter for user-created notes and markdown content.
+
+Supports:
+- Direct text/markdown content from API
+- Local markdown files (Obsidian, etc.)
+- Notion exports
 """
 
-import os
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 import structlog
 
@@ -20,15 +24,14 @@ logger = structlog.get_logger(__name__)
 
 class NotesAdapter(BaseAdapter):
     """
-    Adapter for ingesting local markdown notes.
+    Adapter for ingesting user notes and markdown content.
     
-    Supports:
-    - Obsidian vaults
-    - Plain markdown files
-    - Notion exports
+    Supports two modes:
+    1. Direct content ingestion (from API - title + content)
+    2. File path ingestion (local markdown files)
     
     Note: This adapter is not registered with the factory by default
-    since it handles file paths, not URLs.
+    since it handles direct content or file paths, not URLs.
     """
 
     source_type = SourceType.NOTE
@@ -44,6 +47,93 @@ class NotesAdapter(BaseAdapter):
 
         path = Path(url)
         return path.suffix.lower() in (".md", ".markdown", ".txt")
+
+    async def ingest_content(
+        self,
+        content: str,
+        user_id: str,
+        title: Optional[str] = None,
+        note_id: Optional[str] = None,
+    ) -> CanonicalDocument:
+        """
+        Ingest note content directly (not from a file).
+        
+        This is the primary method for API-based note ingestion.
+        
+        Args:
+            content: The markdown/text content of the note
+            user_id: User ID for multi-tenant isolation
+            title: Optional title (extracted from content if not provided)
+            note_id: Optional note ID for updates (generates new if not provided)
+            
+        Returns:
+            CanonicalDocument with section segments
+        """
+        logger.info(
+            "Ingesting note content",
+            user_id=user_id,
+            content_length=len(content),
+            has_title=bool(title),
+        )
+
+        try:
+            # Extract title from content if not provided
+            if not title:
+                title = self._extract_title_from_content(content)
+            
+            # Generate unique identifier for this note
+            note_identifier = note_id or str(uuid4())
+            
+            # Extract frontmatter if present
+            metadata = self._extract_frontmatter(content)
+            
+            # Remove frontmatter from content for processing
+            clean_content = self._remove_frontmatter(content)
+            
+            # Build segments from content
+            segments = self._build_segments(clean_content)
+
+            return CanonicalDocument(
+                id=note_identifier,
+                user_id=user_id,
+                source_type=SourceType.NOTE,
+                source_url=f"note://{note_identifier}",
+                source_title=title,
+                source_metadata={
+                    "note_id": note_identifier,
+                    "frontmatter": metadata,
+                    "word_count": len(clean_content.split()),
+                    "is_direct_input": True,
+                },
+                raw_content=clean_content,
+                content_segments=segments,
+                created_at=datetime.utcnow(),
+            )
+
+        except Exception as e:
+            logger.error("Error ingesting note content", error=str(e))
+            raise AdapterError(
+                message=f"Failed to ingest note content: {str(e)}",
+                source_url="direct_input",
+                adapter_type="notes",
+                cause=e,
+            )
+
+    def _extract_title_from_content(self, content: str) -> str:
+        """Extract title from frontmatter or first heading."""
+        # Try frontmatter title first
+        frontmatter = self._extract_frontmatter(content)
+        if "title" in frontmatter:
+            return frontmatter["title"]
+        
+        # Try first H1 heading
+        match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+        if match:
+            return match.group(1).strip()
+        
+        # Fall back to first line or default
+        first_line = content.strip().split("\n")[0][:50] if content.strip() else ""
+        return first_line.strip() or "Untitled Note"
 
     async def ingest(self, path: str, user_id: str) -> CanonicalDocument:
         """

@@ -378,6 +378,319 @@ async def _ingest_url_async(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# NOTE INGESTION TASK
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@shared_task(
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+)
+def ingest_note_task(
+    self,
+    job_id: str,
+    note_id: str,
+    title: Optional[str],
+    content: str,
+    user_id: str,
+    enable_ontology: bool = True,
+) -> dict:
+    """
+    Ingest user-created note content.
+    
+    Args:
+        job_id: Job ID for tracking
+        note_id: Unique note identifier
+        title: Note title (optional)
+        content: Note content (markdown/text)
+        user_id: User ID for multi-tenant isolation
+        enable_ontology: Whether to write to graph store (default: True)
+        
+    Returns:
+        Result dict with document_id and chunk_count
+    """
+    return run_async(_ingest_note_async(self, job_id, note_id, title, content, user_id, enable_ontology))
+
+
+async def _ingest_note_async(
+    task,
+    job_id: str,
+    note_id: str,
+    title: Optional[str],
+    content: str,
+    user_id: str,
+    enable_ontology: bool = True,
+) -> dict:
+    """Async implementation of note ingestion task."""
+    from synaptiq.adapters.notes import NotesAdapter
+    from synaptiq.processors.pipeline import create_default_pipeline, create_pipeline_without_ontology
+    
+    mongo = MongoDBStore()
+    qdrant = QdrantStore()
+    fuseki: Optional[FusekiStore] = None
+    
+    try:
+        logger.info(
+            "Starting note ingestion task",
+            job_id=job_id,
+            note_id=note_id,
+            user_id=user_id,
+            content_length=len(content),
+        )
+
+        # Update job status to processing
+        await mongo.update_job(job_id, status=JobStatus.PROCESSING)
+
+        # Ensure storage is ready
+        await qdrant.ensure_collection()
+        await mongo.ensure_indexes()
+        
+        # Initialize Fuseki if ontology is enabled
+        if enable_ontology:
+            fuseki = FusekiStore()
+            try:
+                await fuseki.ensure_dataset()
+                if not await fuseki.user_graph_exists(user_id):
+                    await fuseki.create_user_graph(user_id)
+                    logger.info("Created user graph", user_id=user_id)
+            except Exception as e:
+                logger.warning("Fuseki not available, continuing without ontology", error=str(e))
+                enable_ontology = False
+
+        # Create document using NotesAdapter
+        adapter = NotesAdapter()
+        document = await adapter.ingest_content(
+            content=content,
+            user_id=user_id,
+            title=title,
+            note_id=note_id,
+        )
+
+        # Save source document to MongoDB
+        await mongo.save_source(document)
+
+        # Run processing pipeline
+        logger.info("Running processing pipeline", document_id=document.id)
+        
+        if enable_ontology:
+            pipeline = create_default_pipeline()
+        else:
+            pipeline = create_pipeline_without_ontology()
+            
+        processed_chunks = await pipeline.run(document)
+
+        # Store chunks in Qdrant
+        chunk_count = await qdrant.upsert_chunks(processed_chunks)
+
+        # Update job as completed
+        await mongo.update_job(
+            job_id,
+            status=JobStatus.COMPLETED,
+            document_id=document.id,
+            chunks_processed=chunk_count,
+        )
+
+        logger.info(
+            "Note ingestion completed",
+            job_id=job_id,
+            document_id=document.id,
+            chunk_count=chunk_count,
+        )
+
+        return {
+            "status": "completed",
+            "document_id": document.id,
+            "chunk_count": chunk_count,
+        }
+
+    except Exception as e:
+        logger.error("Note ingestion failed", job_id=job_id, error=str(e))
+        await mongo.update_job(
+            job_id,
+            status=JobStatus.FAILED,
+            error_message=f"Note ingestion error: {str(e)}",
+        )
+        return {"status": "failed", "error": str(e)}
+
+    finally:
+        await mongo.close()
+        await qdrant.close()
+        if fuseki:
+            await fuseki.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FILE INGESTION TASK
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@shared_task(
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+)
+def ingest_file_task(
+    self,
+    job_id: str,
+    filename: str,
+    file_content_b64: Optional[str],
+    user_id: str,
+    source_type: str,
+    s3_key: Optional[str] = None,
+    enable_ontology: bool = True,
+) -> dict:
+    """
+    Ingest uploaded file (PDF/DOCX).
+    
+    Files can be provided either as base64 content OR as S3 key.
+    If s3_key is provided, the file is downloaded from S3.
+    
+    Args:
+        job_id: Job ID for tracking
+        filename: Original filename
+        file_content_b64: Base64 encoded file content (None if using S3)
+        user_id: User ID for multi-tenant isolation
+        source_type: File type (pdf, docx)
+        s3_key: S3 object key (if file is in S3)
+        enable_ontology: Whether to write to graph store (default: True)
+        
+    Returns:
+        Result dict with document_id and chunk_count
+    """
+    return run_async(_ingest_file_async(self, job_id, filename, file_content_b64, user_id, source_type, s3_key, enable_ontology))
+
+
+async def _ingest_file_async(
+    task,
+    job_id: str,
+    filename: str,
+    file_content_b64: Optional[str],
+    user_id: str,
+    source_type: str,
+    s3_key: Optional[str] = None,
+    enable_ontology: bool = True,
+) -> dict:
+    """Async implementation of file ingestion task."""
+    import base64
+    from synaptiq.adapters.file import FileAdapter
+    from synaptiq.processors.pipeline import create_default_pipeline, create_pipeline_without_ontology
+    from synaptiq.storage.s3 import S3Store
+    
+    mongo = MongoDBStore()
+    qdrant = QdrantStore()
+    fuseki: Optional[FusekiStore] = None
+    
+    try:
+        # Get file content - either from S3 or base64
+        if s3_key:
+            # Download from S3
+            logger.info("Downloading file from S3", s3_key=s3_key)
+            s3_store = S3Store()
+            file_content = await s3_store.download_file(s3_key)
+        elif file_content_b64:
+            # Decode from base64
+            file_content = base64.b64decode(file_content_b64)
+        else:
+            raise ValueError("Either s3_key or file_content_b64 must be provided")
+        
+        logger.info(
+            "Starting file ingestion task",
+            job_id=job_id,
+            filename=filename,
+            user_id=user_id,
+            file_size=len(file_content),
+            source_type=source_type,
+            from_s3=bool(s3_key),
+        )
+
+        # Update job status to processing
+        await mongo.update_job(job_id, status=JobStatus.PROCESSING)
+
+        # Ensure storage is ready
+        await qdrant.ensure_collection()
+        await mongo.ensure_indexes()
+        
+        # Initialize Fuseki if ontology is enabled
+        if enable_ontology:
+            fuseki = FusekiStore()
+            try:
+                await fuseki.ensure_dataset()
+                if not await fuseki.user_graph_exists(user_id):
+                    await fuseki.create_user_graph(user_id)
+                    logger.info("Created user graph", user_id=user_id)
+            except Exception as e:
+                logger.warning("Fuseki not available, continuing without ontology", error=str(e))
+                enable_ontology = False
+
+        # Create document using FileAdapter
+        adapter = FileAdapter()
+        document = await adapter.ingest(
+            source=file_content,
+            user_id=user_id,
+            filename=filename,
+        )
+
+        # Save source document to MongoDB
+        await mongo.save_source(document)
+
+        # Run processing pipeline
+        logger.info("Running processing pipeline", document_id=document.id)
+        
+        if enable_ontology:
+            pipeline = create_default_pipeline()
+        else:
+            pipeline = create_pipeline_without_ontology()
+            
+        processed_chunks = await pipeline.run(document)
+
+        # Store chunks in Qdrant
+        chunk_count = await qdrant.upsert_chunks(processed_chunks)
+
+        # Update job as completed
+        await mongo.update_job(
+            job_id,
+            status=JobStatus.COMPLETED,
+            document_id=document.id,
+            chunks_processed=chunk_count,
+        )
+
+        logger.info(
+            "File ingestion completed",
+            job_id=job_id,
+            document_id=document.id,
+            chunk_count=chunk_count,
+            filename=filename,
+        )
+
+        return {
+            "status": "completed",
+            "document_id": document.id,
+            "chunk_count": chunk_count,
+            "filename": filename,
+        }
+
+    except Exception as e:
+        logger.error("File ingestion failed", job_id=job_id, filename=filename, error=str(e))
+        await mongo.update_job(
+            job_id,
+            status=JobStatus.FAILED,
+            error_message=f"File ingestion error: {str(e)}",
+        )
+        return {"status": "failed", "error": str(e)}
+
+    finally:
+        await mongo.close()
+        await qdrant.close()
+        if fuseki:
+            await fuseki.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GRAPH TASKS
 # ═══════════════════════════════════════════════════════════════════════════════
 

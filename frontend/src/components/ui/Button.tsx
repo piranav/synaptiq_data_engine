@@ -19,7 +19,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
                     // Base styles
                     "inline-flex items-center justify-center font-medium transition-all duration-200 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed",
                     // Rounded corners based on spec (sm radius for standard buttons, md for lg buttons)
-                    size === 'lg' ? "rounded-md" : "rounded-sm",
+                    "rounded-sm",
 
                     // Variants
                     variant === "primary" && "bg-accent text-white hover:opacity-90",

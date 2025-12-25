@@ -21,6 +21,7 @@ class SourceType(str, Enum):
     TIKTOK = "tiktok"
     PODCAST = "podcast"
     PDF = "pdf"
+    DOCX = "docx"
 
 
 class Segment(BaseModel):

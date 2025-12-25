@@ -102,6 +102,33 @@ class Settings(BaseSettings):
         description="Refresh token expiration in days"
     )
 
+    # AWS S3 Configuration
+    aws_access_key_id: Optional[str] = Field(
+        default=None,
+        description="AWS Access Key ID for S3"
+    )
+    aws_secret_access_key: Optional[str] = Field(
+        default=None,
+        description="AWS Secret Access Key for S3"
+    )
+    aws_region: str = Field(
+        default="us-east-1",
+        description="AWS Region for S3"
+    )
+    s3_bucket_name: str = Field(
+        default="synaptiq-uploads",
+        description="S3 bucket name for file uploads"
+    )
+    s3_endpoint_url: Optional[str] = Field(
+        default=None,
+        description="Custom S3 endpoint URL (for MinIO or LocalStack)"
+    )
+    
+    @property
+    def s3_enabled(self) -> bool:
+        """Check if S3 is configured."""
+        return bool(self.aws_access_key_id and self.aws_secret_access_key)
+
 
 @lru_cache()
 def get_settings() -> Settings:
