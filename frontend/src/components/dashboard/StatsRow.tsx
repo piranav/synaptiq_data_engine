@@ -27,12 +27,8 @@ export function StatsRow() {
                     setStats(data);
                     setError(false);
                 } else {
-                    // if null (401), effectively error or just empty. 
-                    // Let's treat as error or silent fail.
                     console.warn("Stats data is null (likely 401)");
                     setStats(null);
-                    // To avoid error state flash if it's just polling, we might not want setError(true)
-                    // But for initial load, maybe we do.
                 }
             } catch (err) {
                 console.error("Failed to fetch stats for StatsRow", err);
@@ -50,17 +46,17 @@ export function StatsRow() {
             label: "Total Concepts",
             value: stats?.concepts_count ?? 0,
             icon: BrainCircuit,
-            color: "text-accent",
-            bg: "bg-indigo-50",
+            color: "text-[#60a5fa]",
+            bg: "bg-[#60a5fa]/10",
             trend: "+24",
-            trendColor: "text-green-600 bg-green-50"
+            trendColor: "text-emerald-400 bg-emerald-400/10"
         },
         {
             label: "Definitions",
             value: stats?.definitions_count ?? 0,
             icon: Quote,
-            color: "text-rose-500",
-            bg: "bg-rose-50",
+            color: "text-[#a78bfa]",
+            bg: "bg-[#a78bfa]/10",
             trend: null,
             trendColor: null
         },
@@ -68,8 +64,8 @@ export function StatsRow() {
             label: "Sources",
             value: stats?.sources_count ?? 0,
             icon: Library,
-            color: "text-teal-600",
-            bg: "bg-teal-50",
+            color: "text-[#34d399]",
+            bg: "bg-[#34d399]/10",
             trend: null,
             trendColor: null
         }
@@ -79,7 +75,7 @@ export function StatsRow() {
         return (
             <div className="grid grid-cols-3 gap-6 mb-10">
                 {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-32 rounded-2xl bg-surface border border-border animate-pulse" />
+                    <div key={i} className="h-32 rounded-2xl bg-white/[0.02] border border-white/10 animate-pulse" />
                 ))}
             </div>
         );
@@ -94,7 +90,7 @@ export function StatsRow() {
             {items.map((item, index) => {
                 const Icon = item.icon;
                 return (
-                    <div key={index} className="bg-surface rounded-2xl p-5 border border-border shadow-subtle flex flex-col justify-between h-32 hover:border-gray-300 transition-colors cursor-default">
+                    <div key={index} className="bg-white/[0.02] rounded-2xl p-5 border border-white/10 flex flex-col justify-between h-32 hover:border-white/20 hover:bg-white/[0.04] transition-all cursor-default">
                         <div className="flex justify-between items-start">
                             <div className={`p-2 rounded-lg ${item.bg} ${item.color}`}>
                                 <Icon className="w-[18px] h-[18px]" />
@@ -106,10 +102,10 @@ export function StatsRow() {
                             )}
                         </div>
                         <div>
-                            <div className="text-2xl font-semibold tracking-tight text-primary">
+                            <div className="text-2xl font-semibold tracking-tight text-white">
                                 {item.value.toLocaleString()}
                             </div>
-                            <div className="text-xs text-secondary mt-1 font-medium">
+                            <div className="text-xs text-white/60 mt-1 font-medium">
                                 {item.label}
                             </div>
                         </div>

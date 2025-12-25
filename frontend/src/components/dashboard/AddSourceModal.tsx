@@ -92,29 +92,29 @@ export function AddSourceModal({ isOpen, onClose, initialTab = "url", clickPosit
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animation-fade-in">
-            <div className="bg-surface border border-border w-full max-w-md rounded-xl shadow-elevated p-6 relative animation-scale-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animation-fade-in">
+            <div className="bg-[#0B0D12] border border-white/10 w-full max-w-md rounded-xl shadow-2xl p-6 relative animation-scale-in">
                 <button
                     onClick={onClose}
-                    className="absolute top-4 right-4 text-tertiary hover:text-primary transition-colors"
+                    className="absolute top-4 right-4 text-white/50 hover:text-white transition-colors"
                 >
                     <X className="w-5 h-5" />
                 </button>
 
                 <div className="mb-6">
-                    <h2 className="text-title-3 mb-1">Add to Knowledge</h2>
-                    <p className="text-body text-secondary">
+                    <h2 className="text-xl font-semibold text-white mb-1">Add to Knowledge</h2>
+                    <p className="text-sm text-white/60">
                         Save content to your knowledge graph.
                     </p>
                 </div>
 
                 {/* Tabs */}
-                <div className="flex gap-4 border-b border-border/50 mb-6">
+                <div className="flex gap-4 border-b border-white/10 mb-6">
                     <button
                         onClick={() => setActiveTab("url")}
                         className={clsx(
-                            "pb-2 text-body-small font-medium transition-colors relative",
-                            activeTab === "url" ? "text-primary" : "text-tertiary hover:text-secondary"
+                            "pb-2 text-sm font-medium transition-colors relative",
+                            activeTab === "url" ? "text-white" : "text-white/50 hover:text-white/70"
                         )}
                     >
                         URL
@@ -123,8 +123,8 @@ export function AddSourceModal({ isOpen, onClose, initialTab = "url", clickPosit
                     <button
                         onClick={() => setActiveTab("file")}
                         className={clsx(
-                            "pb-2 text-body-small font-medium transition-colors relative",
-                            activeTab === "file" ? "text-primary" : "text-tertiary hover:text-secondary"
+                            "pb-2 text-sm font-medium transition-colors relative",
+                            activeTab === "file" ? "text-white" : "text-white/50 hover:text-white/70"
                         )}
                     >
                         File Upload
@@ -133,14 +133,14 @@ export function AddSourceModal({ isOpen, onClose, initialTab = "url", clickPosit
                 </div>
 
                 {success ? (
-                    <div className="flex flex-col items-center justify-center py-8 text-success animate-in fade-in zoom-in duration-300">
+                    <div className="flex flex-col items-center justify-center py-8 text-emerald-400 animate-in fade-in zoom-in duration-300">
                         <CheckCircle2 className="w-12 h-12 mb-3" />
-                        <p className="text-title-3">Added Successfully</p>
+                        <p className="text-xl font-semibold">Added Successfully</p>
                     </div>
                 ) : activeTab === "url" ? (
                     <form onSubmit={handleSubmit} className="space-y-4">
-                        <div className="p-4 bg-canvas rounded-xl flex items-center justify-center mb-2">
-                            <LinkIcon className="w-8 h-8 text-secondary/50" />
+                        <div className="p-4 bg-white/[0.02] border border-white/10 rounded-xl flex items-center justify-center mb-2">
+                            <LinkIcon className="w-8 h-8 text-white/30" />
                         </div>
                         <Input
                             placeholder="https://youtube.com/..."
@@ -164,8 +164,8 @@ export function AddSourceModal({ isOpen, onClose, initialTab = "url", clickPosit
                         <div
                             className={clsx(
                                 "border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center transition-colors cursor-pointer",
-                                dragActive ? "border-accent bg-accent/5" : "border-border hover:border-border-subtle hover:bg-canvas",
-                                error ? "border-danger/50" : ""
+                                dragActive ? "border-accent bg-accent/5" : "border-white/20 hover:border-white/30 hover:bg-white/[0.02]",
+                                error ? "border-rose-500/50" : ""
                             )}
                             onDragEnter={handleDrag}
                             onDragLeave={handleDrag}
@@ -184,19 +184,19 @@ export function AddSourceModal({ isOpen, onClose, initialTab = "url", clickPosit
                             {file ? (
                                 <div className="text-center">
                                     <FileIcon className="w-10 h-10 text-accent mb-3 mx-auto" />
-                                    <p className="text-body font-medium truncate max-w-[200px]">{file.name}</p>
-                                    <p className="text-caption text-secondary">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                                    <p className="text-sm font-medium text-white truncate max-w-[200px]">{file.name}</p>
+                                    <p className="text-xs text-white/60">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                                 </div>
                             ) : (
                                 <div className="text-center">
-                                    <Upload className="w-10 h-10 text-tertiary mb-3 mx-auto" />
-                                    <p className="text-body font-medium">Click or drag file</p>
-                                    <p className="text-caption text-secondary mt-1">PDF, DOCX up to 50MB</p>
+                                    <Upload className="w-10 h-10 text-white/40 mb-3 mx-auto" />
+                                    <p className="text-sm font-medium text-white">Click or drag file</p>
+                                    <p className="text-xs text-white/60 mt-1">PDF, DOCX up to 50MB</p>
                                 </div>
                             )}
                         </div>
 
-                        {error && <p className="text-caption text-danger text-center">{error}</p>}
+                        {error && <p className="text-xs text-rose-400 text-center">{error}</p>}
 
                         <Button
                             type="submit"
