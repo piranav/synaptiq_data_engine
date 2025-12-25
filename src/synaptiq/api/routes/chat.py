@@ -2,203 +2,476 @@
 Chat API routes for conversational knowledge retrieval.
 
 Provides endpoints for:
-- Sending chat messages and receiving responses
+- Creating and managing conversations
+- Sending messages and receiving responses
 - Streaming chat responses
-- Managing conversation sessions
+- Managing conversation history
 
-Supports both authenticated (JWT) and legacy (user_id path param) modes.
+All endpoints require JWT authentication.
 """
 
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
-from sse_starlette.sse import EventSourceResponse
-import structlog
 
-from synaptiq.agents import QueryAgent, get_session, QueryResponse
-from synaptiq.agents.session import list_user_sessions, delete_session
-from synaptiq.api.middleware.auth import get_current_user, get_current_user_optional
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
+
+from synaptiq.api.middleware.auth import get_current_user
 from synaptiq.domain.models import User
+from synaptiq.infrastructure.database import get_async_session
+from synaptiq.services.chat_service import ChatService
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+router = APIRouter(prefix="/api/v1/chat", tags=["Chat"])
 
 
 # =============================================================================
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
-class ChatRequest(BaseModel):
-    """Request body for chat endpoint."""
+
+class ConversationCreate(BaseModel):
+    """Request to create a new conversation."""
     
-    query: str = Field(
-        ...,
-        description="The user's question or message",
-        min_length=1,
-        max_length=2000,
+    title: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Conversation title (auto-generated from first message if not provided)",
     )
-    session_id: str = Field(
+
+
+class ConversationUpdate(BaseModel):
+    """Request to update a conversation."""
+    
+    title: Optional[str] = Field(None, max_length=500, description="New title")
+
+
+class ConversationResponse(BaseModel):
+    """Response containing conversation information."""
+    
+    id: str = Field(..., description="Conversation ID")
+    user_id: str = Field(..., description="User ID")
+    title: Optional[str] = Field(None, description="Conversation title")
+    preview: Optional[str] = Field(None, description="Preview of first message")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Last update timestamp")
+
+
+class ConversationListResponse(BaseModel):
+    """Response containing list of conversations."""
+    
+    conversations: list[ConversationResponse]
+    total: int
+
+
+class MessageRequest(BaseModel):
+    """Request to send a chat message."""
+    
+    content: str = Field(
         ...,
-        description="Conversation session ID for history tracking",
+        description="Message content",
         min_length=1,
-        max_length=100,
+        max_length=10000,
     )
+
+
+class CitationResponse(BaseModel):
+    """Citation in an assistant response."""
+    
+    id: Optional[int] = None
+    source_id: Optional[str] = None
+    source_title: Optional[str] = None
+    source_url: Optional[str] = None
+    timestamp: Optional[int] = None
+    chunk_text: Optional[str] = None
+
+
+class MessageResponse(BaseModel):
+    """Response containing a message."""
+    
+    id: str = Field(..., description="Message ID")
+    conversation_id: str = Field(..., description="Conversation ID")
+    role: str = Field(..., description="'user' or 'assistant'")
+    content: str = Field(..., description="Message content")
+    citations: list[dict] = Field(default_factory=list, description="Source citations")
+    concepts_referenced: list[str] = Field(
+        default_factory=list,
+        description="Concepts from knowledge graph",
+    )
+    confidence: Optional[float] = Field(None, description="Confidence score")
+    source_type: Optional[str] = Field(None, description="Response source type")
+    created_at: str = Field(..., description="Creation timestamp")
+
+
+class MessageListResponse(BaseModel):
+    """Response containing list of messages."""
+    
+    messages: list[MessageResponse]
+    conversation_id: str
 
 
 class ChatResponse(BaseModel):
-    """Response from chat endpoint."""
+    """Response from sending a message."""
     
-    answer: str = Field(description="The generated answer")
-    citations: list[dict] = Field(
-        default_factory=list,
-        description="List of source citations"
-    )
-    concepts_referenced: list[str] = Field(
-        default_factory=list,
-        description="Concepts from knowledge graph used"
-    )
-    confidence: float = Field(
-        ge=0.0,
-        le=1.0,
-        description="Confidence score"
-    )
-    source_type: str = Field(
-        description="'personal_knowledge' or 'llm_knowledge'"
-    )
-    retrieval_metadata: Optional[dict] = Field(
-        default=None,
-        description="Details about retrieval process"
-    )
-
-
-class SessionInfo(BaseModel):
-    """Information about a chat session."""
-    
-    session_id: str
-    message_count: int = 0
-
-
-class SessionListResponse(BaseModel):
-    """Response for session list endpoint."""
-    
-    sessions: list[str]
-    user_id: str
+    user_message: MessageResponse
+    assistant_message: MessageResponse
 
 
 # =============================================================================
 # DEPENDENCY INJECTION
 # =============================================================================
 
-# Cached agent instance
-_agent: Optional[QueryAgent] = None
 
-
-async def get_query_agent() -> QueryAgent:
-    """Get or create the QueryAgent instance."""
-    global _agent
-    
-    if _agent is None:
-        logger.info("Initializing QueryAgent")
-        _agent = QueryAgent()
-    
-    return _agent
+async def get_chat_service(
+    session: AsyncSession = Depends(get_async_session),
+) -> ChatService:
+    """Get ChatService instance."""
+    return ChatService(session)
 
 
 # =============================================================================
-# AUTHENTICATED CHAT ENDPOINTS (New - JWT required)
+# CONVERSATION ENDPOINTS
 # =============================================================================
 
-@router.post("", response_model=ChatResponse)
-async def chat_authenticated(
-    request: ChatRequest,
+
+@router.post(
+    "/conversations",
+    response_model=ConversationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new conversation",
+)
+async def create_conversation(
+    body: ConversationCreate,
     user: User = Depends(get_current_user),
-    agent: QueryAgent = Depends(get_query_agent),
-):
+    chat_service: ChatService = Depends(get_chat_service),
+) -> ConversationResponse:
     """
-    Send a chat message and get a response from the knowledge base.
+    Create a new conversation for the authenticated user.
     
-    Requires JWT authentication.
+    The title is optional - if not provided, it will be auto-generated
+    from the first message.
+    """
+    conversation = await chat_service.create_conversation(
+        user_id=user.id,
+        title=body.title,
+    )
+    
+    return ConversationResponse(
+        id=conversation.id,
+        user_id=conversation.user_id,
+        title=conversation.title,
+        preview=conversation.preview,
+        created_at=conversation.created_at.isoformat(),
+        updated_at=conversation.updated_at.isoformat(),
+    )
+
+
+@router.get(
+    "/conversations",
+    response_model=ConversationListResponse,
+    summary="List conversations",
+)
+async def list_conversations(
+    user: User = Depends(get_current_user),
+    limit: int = Query(default=50, ge=1, le=100, description="Maximum results"),
+    offset: int = Query(default=0, ge=0, description="Pagination offset"),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> ConversationListResponse:
+    """
+    List all conversations for the authenticated user.
+    
+    Conversations are ordered by most recently updated.
+    """
+    conversations = await chat_service.list_conversations(
+        user_id=user.id,
+        limit=limit,
+        offset=offset,
+    )
+    
+    return ConversationListResponse(
+        conversations=[
+            ConversationResponse(
+                id=conv.id,
+                user_id=conv.user_id,
+                title=conv.title,
+                preview=conv.preview,
+                created_at=conv.created_at.isoformat(),
+                updated_at=conv.updated_at.isoformat(),
+            )
+            for conv in conversations
+        ],
+        total=len(conversations),
+    )
+
+
+@router.get(
+    "/conversations/{conversation_id}",
+    response_model=ConversationResponse,
+    summary="Get conversation details",
+)
+async def get_conversation(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> ConversationResponse:
+    """
+    Get details of a specific conversation.
+    """
+    conversation = await chat_service.get_conversation(
+        conversation_id=conversation_id,
+        user_id=user.id,
+    )
+    
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation not found: {conversation_id}",
+        )
+    
+    return ConversationResponse(
+        id=conversation.id,
+        user_id=conversation.user_id,
+        title=conversation.title,
+        preview=conversation.preview,
+        created_at=conversation.created_at.isoformat(),
+        updated_at=conversation.updated_at.isoformat(),
+    )
+
+
+@router.patch(
+    "/conversations/{conversation_id}",
+    response_model=ConversationResponse,
+    summary="Update conversation",
+)
+async def update_conversation(
+    conversation_id: str,
+    body: ConversationUpdate,
+    user: User = Depends(get_current_user),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> ConversationResponse:
+    """
+    Update a conversation (e.g., rename it).
+    """
+    conversation = await chat_service.update_conversation(
+        conversation_id=conversation_id,
+        user_id=user.id,
+        title=body.title,
+    )
+    
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation not found: {conversation_id}",
+        )
+    
+    return ConversationResponse(
+        id=conversation.id,
+        user_id=conversation.user_id,
+        title=conversation.title,
+        preview=conversation.preview,
+        created_at=conversation.created_at.isoformat(),
+        updated_at=conversation.updated_at.isoformat(),
+    )
+
+
+@router.delete(
+    "/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete conversation",
+)
+async def delete_conversation(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> None:
+    """
+    Delete a conversation and all its messages.
+    
+    This action is irreversible.
+    """
+    deleted = await chat_service.delete_conversation(
+        conversation_id=conversation_id,
+        user_id=user.id,
+    )
+    
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation not found: {conversation_id}",
+        )
+
+
+# =============================================================================
+# MESSAGE ENDPOINTS
+# =============================================================================
+
+
+@router.get(
+    "/conversations/{conversation_id}/messages",
+    response_model=MessageListResponse,
+    summary="Get conversation messages",
+)
+async def get_messages(
+    conversation_id: str,
+    user: User = Depends(get_current_user),
+    limit: int = Query(default=100, ge=1, le=500, description="Maximum results"),
+    offset: int = Query(default=0, ge=0, description="Pagination offset"),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> MessageListResponse:
+    """
+    Get all messages in a conversation.
+    
+    Messages are ordered chronologically (oldest first).
+    """
+    messages = await chat_service.get_messages(
+        conversation_id=conversation_id,
+        user_id=user.id,
+        limit=limit,
+        offset=offset,
+    )
+    
+    return MessageListResponse(
+        messages=[
+            MessageResponse(
+                id=msg.id,
+                conversation_id=msg.conversation_id,
+                role=msg.role,
+                content=msg.content,
+                citations=msg.citations or [],
+                concepts_referenced=msg.concepts_referenced or [],
+                confidence=msg.confidence,
+                source_type=msg.source_type,
+                created_at=msg.created_at.isoformat(),
+            )
+            for msg in messages
+        ],
+        conversation_id=conversation_id,
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages",
+    response_model=ChatResponse,
+    summary="Send a message",
+)
+async def send_message(
+    conversation_id: str,
+    body: MessageRequest,
+    user: User = Depends(get_current_user),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> ChatResponse:
+    """
+    Send a message to the conversation and get an AI response.
     
     The agent will:
     1. Classify the intent of your query
     2. Search your knowledge graph and/or vector store
     3. Synthesize a response with citations
     
-    Returns:
-        ChatResponse with answer, citations, and metadata
+    Returns both the user message and the assistant response.
     """
     logger.info(
-        "Chat request (authenticated)",
+        "Sending message",
+        conversation_id=conversation_id,
         user_id=user.id,
-        session_id=request.session_id,
-        query_length=len(request.query),
+        content_length=len(body.content),
     )
     
     try:
-        response = await agent.query(
+        user_message, assistant_message = await chat_service.send_message(
             user_id=user.id,
-            query=request.query,
-            session_id=request.session_id,
+            conversation_id=conversation_id,
+            content=body.content,
         )
         
         return ChatResponse(
-            answer=response.answer,
-            citations=[c.model_dump() for c in response.citations],
-            concepts_referenced=response.concepts_referenced,
-            confidence=response.confidence,
-            source_type=response.source_type,
-            retrieval_metadata=response.retrieval_metadata.model_dump() 
-                if response.retrieval_metadata else None,
+            user_message=MessageResponse(
+                id=user_message.id,
+                conversation_id=user_message.conversation_id,
+                role=user_message.role,
+                content=user_message.content,
+                citations=user_message.citations or [],
+                concepts_referenced=user_message.concepts_referenced or [],
+                confidence=user_message.confidence,
+                source_type=user_message.source_type,
+                created_at=user_message.created_at.isoformat(),
+            ),
+            assistant_message=MessageResponse(
+                id=assistant_message.id,
+                conversation_id=assistant_message.conversation_id,
+                role=assistant_message.role,
+                content=assistant_message.content,
+                citations=assistant_message.citations or [],
+                concepts_referenced=assistant_message.concepts_referenced or [],
+                confidence=assistant_message.confidence,
+                source_type=assistant_message.source_type,
+                created_at=assistant_message.created_at.isoformat(),
+            ),
         )
         
-    except Exception as e:
-        logger.error("Chat request failed", error=str(e), user_id=user.id)
+    except ValueError as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process chat request: {str(e)}",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(
+            "Message send failed",
+            conversation_id=conversation_id,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process message: {str(e)}",
         )
 
 
-@router.post("/stream")
-async def chat_stream_authenticated(
-    request: ChatRequest,
+@router.post(
+    "/conversations/{conversation_id}/messages/stream",
+    summary="Send a message with streaming response",
+)
+async def send_message_stream(
+    conversation_id: str,
+    body: MessageRequest,
     user: User = Depends(get_current_user),
-    agent: QueryAgent = Depends(get_query_agent),
+    chat_service: ChatService = Depends(get_chat_service),
 ):
     """
-    Send a chat message and stream the response.
+    Send a message and stream the AI response.
     
-    Requires JWT authentication.
-    Returns a Server-Sent Events (SSE) stream with response chunks.
+    Returns a Server-Sent Events (SSE) stream with:
+    - `user_message`: When user message is saved
+    - `token`: For each response token
+    - `done`: When response is complete
+    - `error`: If an error occurs
     """
     logger.info(
-        "Streaming chat request (authenticated)",
+        "Streaming message",
+        conversation_id=conversation_id,
         user_id=user.id,
-        session_id=request.session_id,
     )
-    
-    user_id = user.id
     
     async def event_generator():
         """Generate SSE events from streaming response."""
         try:
-            async for chunk in agent.query_stream(
-                user_id=user_id,
-                query=request.query,
-                session_id=request.session_id,
+            async for event in chat_service.send_message_stream(
+                user_id=user.id,
+                conversation_id=conversation_id,
+                content=body.content,
             ):
                 yield {
-                    "event": "message",
-                    "data": chunk,
+                    "event": event["event"],
+                    "data": event["data"] if isinstance(event["data"], str)
+                           else str(event["data"]),
                 }
-            
-            # Send completion event
+        except ValueError as e:
             yield {
-                "event": "done",
-                "data": "",
+                "event": "error",
+                "data": str(e),
             }
-            
         except Exception as e:
             logger.error("Streaming failed", error=str(e))
             yield {
@@ -209,274 +482,156 @@ async def chat_stream_authenticated(
     return EventSourceResponse(event_generator())
 
 
-@router.get("/sessions", response_model=SessionListResponse)
-async def get_sessions_authenticated(
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/regenerate",
+    response_model=MessageResponse,
+    summary="Regenerate a response",
+)
+async def regenerate_response(
+    conversation_id: str,
+    message_id: str,
     user: User = Depends(get_current_user),
-):
+    chat_service: ChatService = Depends(get_chat_service),
+) -> MessageResponse:
     """
-    List all conversation sessions for the authenticated user.
+    Regenerate an assistant response.
     
-    Requires JWT authentication.
+    The original response is deleted and a new one is generated
+    based on the preceding user message.
     """
     try:
-        sessions = await list_user_sessions(user.id)
-        
-        return SessionListResponse(
-            sessions=sessions,
+        new_message = await chat_service.regenerate_response(
             user_id=user.id,
+            conversation_id=conversation_id,
+            message_id=message_id,
         )
         
-    except Exception as e:
-        logger.error("Failed to list sessions", error=str(e), user_id=user.id)
+        return MessageResponse(
+            id=new_message.id,
+            conversation_id=new_message.conversation_id,
+            role=new_message.role,
+            content=new_message.content,
+            citations=new_message.citations or [],
+            concepts_referenced=new_message.concepts_referenced or [],
+            confidence=new_message.confidence,
+            source_type=new_message.source_type,
+            created_at=new_message.created_at.isoformat(),
+        )
+        
+    except ValueError as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to list sessions: {str(e)}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
         )
-
-
-@router.get("/sessions/{session_id}/history")
-async def get_chat_history_authenticated(
-    session_id: str,
-    user: User = Depends(get_current_user),
-):
-    """
-    Get conversation history for a session.
-    
-    Requires JWT authentication.
-    """
-    try:
-        session = await get_session(session_id, user.id)
-        
-        # Get items from session
-        items = await session.get_items()
-        
-        # Format history
-        history = []
-        for item in items:
-            if hasattr(item, 'role') and hasattr(item, 'content'):
-                history.append({
-                    "role": item.role,
-                    "content": item.content if isinstance(item.content, str) 
-                              else str(item.content),
-                })
-        
-        return {
-            "session_id": session_id,
-            "user_id": user.id,
-            "history": history,
-            "message_count": len(history),
-        }
-        
     except Exception as e:
         logger.error(
-            "Failed to get chat history",
+            "Regeneration failed",
+            conversation_id=conversation_id,
+            message_id=message_id,
             error=str(e),
-            user_id=user.id,
-            session_id=session_id,
         )
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get chat history: {str(e)}",
-        )
-
-
-@router.delete("/sessions/{session_id}")
-async def clear_session_authenticated(
-    session_id: str,
-    user: User = Depends(get_current_user),
-):
-    """
-    Delete a conversation session.
-    
-    Requires JWT authentication.
-    This permanently removes all messages in the session.
-    """
-    try:
-        deleted = await delete_session(session_id, user.id)
-        
-        return {
-            "session_id": session_id,
-            "user_id": user.id,
-            "deleted": deleted,
-            "status": "deleted" if deleted else "not_found",
-        }
-        
-    except Exception as e:
-        logger.error(
-            "Failed to delete session",
-            error=str(e),
-            user_id=user.id,
-            session_id=session_id,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to delete session: {str(e)}",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to regenerate response: {str(e)}",
         )
 
 
 # =============================================================================
-# LEGACY CHAT ENDPOINTS (Deprecated - user_id in path)
+# QUICK CHAT ENDPOINT (for simple use cases)
 # =============================================================================
+
+
+class QuickChatRequest(BaseModel):
+    """Request for quick chat (auto-creates conversation)."""
+    
+    query: str = Field(
+        ...,
+        description="The user's question",
+        min_length=1,
+        max_length=10000,
+    )
+    conversation_id: Optional[str] = Field(
+        None,
+        description="Existing conversation ID (creates new if not provided)",
+    )
+
 
 @router.post(
-    "/legacy/{user_id}",
+    "",
     response_model=ChatResponse,
-    deprecated=True,
-    summary="[DEPRECATED] Send chat message",
-    description="Deprecated: Use POST /chat with JWT authentication instead.",
+    summary="Quick chat",
 )
-async def chat_legacy(
-    user_id: str,
-    request: ChatRequest,
-    agent: QueryAgent = Depends(get_query_agent),
-):
+async def quick_chat(
+    body: QuickChatRequest,
+    user: User = Depends(get_current_user),
+    chat_service: ChatService = Depends(get_chat_service),
+) -> ChatResponse:
     """
-    [DEPRECATED] Send a chat message using user_id path parameter.
+    Quick chat endpoint - creates a conversation if needed.
     
-    Please migrate to POST /chat with JWT authentication.
+    This is a convenience endpoint that:
+    1. Creates a new conversation if conversation_id is not provided
+    2. Sends the message and returns the response
+    
+    For more control, use the conversation endpoints directly.
     """
-    logger.info(
-        "Chat request (legacy)",
-        user_id=user_id,
-        session_id=request.session_id,
-        query_length=len(request.query),
-    )
+    conversation_id = body.conversation_id
     
+    # Create conversation if not provided
+    if not conversation_id:
+        conversation = await chat_service.create_conversation(user_id=user.id)
+        conversation_id = conversation.id
+    
+    # Send message
     try:
-        response = await agent.query(
-            user_id=user_id,
-            query=request.query,
-            session_id=request.session_id,
+        user_message, assistant_message = await chat_service.send_message(
+            user_id=user.id,
+            conversation_id=conversation_id,
+            content=body.query,
         )
         
         return ChatResponse(
-            answer=response.answer,
-            citations=[c.model_dump() for c in response.citations],
-            concepts_referenced=response.concepts_referenced,
-            confidence=response.confidence,
-            source_type=response.source_type,
-            retrieval_metadata=response.retrieval_metadata.model_dump() 
-                if response.retrieval_metadata else None,
+            user_message=MessageResponse(
+                id=user_message.id,
+                conversation_id=user_message.conversation_id,
+                role=user_message.role,
+                content=user_message.content,
+                citations=user_message.citations or [],
+                concepts_referenced=user_message.concepts_referenced or [],
+                confidence=user_message.confidence,
+                source_type=user_message.source_type,
+                created_at=user_message.created_at.isoformat(),
+            ),
+            assistant_message=MessageResponse(
+                id=assistant_message.id,
+                conversation_id=assistant_message.conversation_id,
+                role=assistant_message.role,
+                content=assistant_message.content,
+                citations=assistant_message.citations or [],
+                concepts_referenced=assistant_message.concepts_referenced or [],
+                confidence=assistant_message.confidence,
+                source_type=assistant_message.source_type,
+                created_at=assistant_message.created_at.isoformat(),
+            ),
         )
         
-    except Exception as e:
-        logger.error("Chat request failed", error=str(e), user_id=user_id)
+    except ValueError as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process chat request: {str(e)}",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error("Quick chat failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process chat: {str(e)}",
         )
 
 
-@router.post(
-    "/legacy/{user_id}/stream",
-    deprecated=True,
-    summary="[DEPRECATED] Stream chat response",
-    description="Deprecated: Use POST /chat/stream with JWT authentication instead.",
-)
-async def chat_stream_legacy(
-    user_id: str,
-    request: ChatRequest,
-    agent: QueryAgent = Depends(get_query_agent),
-):
-    """
-    [DEPRECATED] Stream chat response using user_id path parameter.
-    
-    Please migrate to POST /chat/stream with JWT authentication.
-    """
-    logger.info(
-        "Streaming chat request (legacy)",
-        user_id=user_id,
-        session_id=request.session_id,
-    )
-    
-    async def event_generator():
-        """Generate SSE events from streaming response."""
-        try:
-            async for chunk in agent.query_stream(
-                user_id=user_id,
-                query=request.query,
-                session_id=request.session_id,
-            ):
-                yield {
-                    "event": "message",
-                    "data": chunk,
-                }
-            
-            yield {
-                "event": "done",
-                "data": "",
-            }
-            
-        except Exception as e:
-            logger.error("Streaming failed", error=str(e))
-            yield {
-                "event": "error",
-                "data": str(e),
-            }
-    
-    return EventSourceResponse(event_generator())
-
-
-@router.get(
-    "/legacy/{user_id}/sessions",
-    response_model=SessionListResponse,
-    deprecated=True,
-    summary="[DEPRECATED] List sessions",
-    description="Deprecated: Use GET /chat/sessions with JWT authentication instead.",
-)
-async def get_sessions_legacy(user_id: str):
-    """[DEPRECATED] List sessions using user_id path parameter."""
-    try:
-        sessions = await list_user_sessions(user_id)
-        return SessionListResponse(sessions=sessions, user_id=user_id)
-    except Exception as e:
-        logger.error("Failed to list sessions", error=str(e), user_id=user_id)
-        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {str(e)}")
-
-
-@router.get(
-    "/legacy/{user_id}/sessions/{session_id}/history",
-    deprecated=True,
-    summary="[DEPRECATED] Get chat history",
-    description="Deprecated: Use GET /chat/sessions/{session_id}/history with JWT authentication instead.",
-)
-async def get_chat_history_legacy(user_id: str, session_id: str):
-    """[DEPRECATED] Get chat history using user_id path parameter."""
-    try:
-        session = await get_session(session_id, user_id)
-        items = await session.get_items()
-        history = []
-        for item in items:
-            if hasattr(item, 'role') and hasattr(item, 'content'):
-                history.append({
-                    "role": item.role,
-                    "content": item.content if isinstance(item.content, str) else str(item.content),
-                })
-        return {"session_id": session_id, "user_id": user_id, "history": history, "message_count": len(history)}
-    except Exception as e:
-        logger.error("Failed to get chat history", error=str(e), user_id=user_id, session_id=session_id)
-        raise HTTPException(status_code=500, detail=f"Failed to get chat history: {str(e)}")
-
-
-@router.delete(
-    "/legacy/{user_id}/sessions/{session_id}",
-    deprecated=True,
-    summary="[DEPRECATED] Delete session",
-    description="Deprecated: Use DELETE /chat/sessions/{session_id} with JWT authentication instead.",
-)
-async def clear_session_legacy(user_id: str, session_id: str):
-    """[DEPRECATED] Delete session using user_id path parameter."""
-    try:
-        deleted = await delete_session(session_id, user_id)
-        return {"session_id": session_id, "user_id": user_id, "deleted": deleted, "status": "deleted" if deleted else "not_found"}
-    except Exception as e:
-        logger.error("Failed to delete session", error=str(e), user_id=user_id, session_id=session_id)
-        raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
-
-
 # =============================================================================
-# HEALTH/STATUS ENDPOINTS
+# HEALTH ENDPOINT
 # =============================================================================
+
 
 @router.get("/health")
 async def health_check():
