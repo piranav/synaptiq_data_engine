@@ -13,7 +13,7 @@ export default function ChatPage() {
     const [isLoadingConversations, setIsLoadingConversations] = useState(true);
     const [isLoadingMessages, setIsLoadingMessages] = useState(false);
     const [isSending, setIsSending] = useState(false);
-    const [streamingContent, setStreamingContent] = useState("");
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -39,7 +39,7 @@ export default function ChatPage() {
     // Scroll to bottom when messages change
     useEffect(() => {
         scrollToBottom();
-    }, [messages, streamingContent, scrollToBottom]);
+    }, [messages, scrollToBottom]);
 
     const loadConversations = async () => {
         try {
@@ -143,36 +143,42 @@ export default function ChatPage() {
         }
     };
 
+    const handleToggleSidebar = () => {
+        setIsSidebarCollapsed(!isSidebarCollapsed);
+    };
+
     return (
-        <div className="flex h-full bg-canvas">
+        <div className="flex h-full bg-[#0B0D12]">
             {/* Sidebar */}
             <ConversationList
                 conversations={conversations}
                 activeId={activeConversationId}
                 isLoading={isLoadingConversations}
+                isCollapsed={isSidebarCollapsed}
                 onSelect={handleSelectConversation}
                 onNew={handleNewConversation}
                 onDelete={handleDeleteConversation}
+                onToggleCollapse={handleToggleSidebar}
             />
 
             {/* Main Chat Area */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
+            <div className="flex-1 flex flex-col h-full overflow-hidden items-center">
                 {activeConversationId || messages.length > 0 ? (
                     <>
                         {/* Messages */}
-                        <div className="flex-1 overflow-y-auto no-scrollbar px-6 py-6">
+                        <div className="flex-1 w-full overflow-y-auto no-scrollbar px-4 md:px-8 lg:px-16 py-4">
                             <div className="max-w-3xl mx-auto space-y-4">
                                 {isLoadingMessages ? (
                                     <div className="flex items-center justify-center h-32">
-                                        <Loader2 className="w-6 h-6 animate-spin text-secondary" />
+                                        <Loader2 className="w-6 h-6 animate-spin text-white/60" />
                                     </div>
                                 ) : messages.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center h-64 text-center">
-                                        <MessageSquare className="w-12 h-12 text-tertiary mb-4" />
-                                        <h3 className="text-title-3 text-primary mb-2">
+                                        <MessageSquare className="w-12 h-12 text-white/40 mb-4" strokeWidth={1.5} />
+                                        <h3 className="text-[18px] leading-[24px] font-semibold text-white mb-2" style={{ fontFamily: "'SF Pro Display', sans-serif" }}>
                                             Ask anything
                                         </h3>
-                                        <p className="text-body-small text-secondary max-w-md">
+                                        <p className="text-[13px] leading-[18px] text-white/60 max-w-md">
                                             Query your knowledge base in natural language. Get answers with citations from your sources.
                                         </p>
                                     </div>
@@ -184,11 +190,12 @@ export default function ChatPage() {
 
                                 {/* Streaming indicator */}
                                 {isSending && (
-                                    <div className="flex justify-start">
-                                        <div className="bg-surface border border-border-subtle rounded-lg px-4 py-3">
-                                            <div className="flex items-center gap-2 text-secondary">
+                                    <div className="max-w-3xl">
+                                        <div className="mb-1 text-[12px] leading-[16px] text-white/60">Synaptiq</div>
+                                        <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+                                            <div className="flex items-center gap-2 text-white/60">
                                                 <Loader2 className="w-4 h-4 animate-spin" />
-                                                <span className="text-body-small">Thinking...</span>
+                                                <span className="text-[13px] leading-[18px]">Thinking...</span>
                                             </div>
                                         </div>
                                     </div>
@@ -203,19 +210,19 @@ export default function ChatPage() {
                     </>
                 ) : (
                     /* Empty state when no conversation */
-                    <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
-                        <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-6">
-                            <MessageSquare className="w-8 h-8 text-accent" />
+                    <div className="flex-1 w-full flex flex-col items-center justify-center text-center px-6">
+                        <div className="w-16 h-16 rounded-full bg-[#256BEE]/10 border border-[#256BEE]/30 flex items-center justify-center mb-6">
+                            <MessageSquare className="w-8 h-8 text-[#256BEE]" strokeWidth={1.5} />
                         </div>
-                        <h2 className="text-title-2 text-primary mb-2">
+                        <h2 className="text-[24px] leading-[28px] font-semibold text-white mb-2" style={{ fontFamily: "'SF Pro Display', sans-serif" }}>
                             Ask anything
                         </h2>
-                        <p className="text-body text-secondary max-w-md mb-8">
+                        <p className="text-[13px] leading-[18px] text-white/60 max-w-md mb-8">
                             Query your knowledge base in natural language. Get answers with citations from your sources.
                         </p>
                         <button
                             onClick={handleNewConversation}
-                            className="px-6 py-3 bg-accent text-white rounded-md text-body font-medium hover:opacity-90 transition-opacity"
+                            className="h-10 px-6 bg-[#256BEE] hover:bg-[#1F5BCC] text-white rounded-md text-[13px] leading-[18px] font-medium border border-white/10 transition-colors"
                         >
                             Start a conversation
                         </button>

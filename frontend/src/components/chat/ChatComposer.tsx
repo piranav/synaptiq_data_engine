@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, Loader2, Sparkles } from "lucide-react";
 import clsx from "clsx";
 
 interface ChatComposerProps {
@@ -15,7 +15,7 @@ export function ChatComposer({
     onSend,
     isSending,
     disabled = false,
-    placeholder = "Ask about your knowledge...",
+    placeholder = "Ask anything…",
 }: ChatComposerProps) {
     const [content, setContent] = useState("");
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -25,7 +25,7 @@ export function ChatComposer({
         const textarea = textareaRef.current;
         if (textarea) {
             textarea.style.height = "auto";
-            const newHeight = Math.min(textarea.scrollHeight, 160); // Max 4 lines approx
+            const newHeight = Math.min(textarea.scrollHeight, 120);
             textarea.style.height = `${newHeight}px`;
         }
     }, [content]);
@@ -47,39 +47,55 @@ export function ChatComposer({
     const canSend = content.trim().length > 0 && !isSending && !disabled;
 
     return (
-        <div className="border-t border-border bg-surface px-6 py-4">
+        <div className="border-t border-white/10 px-4 md:px-8 lg:px-16 py-3 bg-black/20 backdrop-blur">
             <div className="max-w-3xl mx-auto">
-                <div className="relative flex items-end gap-3 bg-canvas border border-border rounded-lg px-4 py-3 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/10 transition-all">
-                    <textarea
-                        ref={textareaRef}
-                        value={content}
-                        onChange={(e) => setContent(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder={placeholder}
-                        disabled={isSending || disabled}
-                        rows={1}
-                        className="flex-1 resize-none bg-transparent text-body text-primary placeholder:text-tertiary focus:outline-none min-h-[26px] max-h-[160px]"
-                    />
+                <div className="flex items-end gap-2">
+                    {/* Input Area */}
+                    <div
+                        className={clsx(
+                            "flex-1 rounded-md border border-white/10 bg-white/[0.02] p-2",
+                            "focus-within:ring-2 focus-within:ring-[#256BEE]/50 focus-within:border-[#256BEE]/50",
+                            "transition-all"
+                        )}
+                    >
+                        <textarea
+                            ref={textareaRef}
+                            value={content}
+                            onChange={(e) => setContent(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            placeholder={placeholder}
+                            disabled={isSending || disabled}
+                            rows={1}
+                            className="w-full bg-transparent outline-none resize-none text-[13px] leading-[18px] text-white placeholder-white/40 min-h-[26px] max-h-[120px]"
+                        />
+                        {/* Hints */}
+                        <div className="mt-1 flex items-center gap-4">
+                            <div className="flex items-center gap-1 text-[12px] leading-[16px] text-white/50">
+                                <Sparkles className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                <span>⌘Enter to send</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Send Button */}
                     <button
                         onClick={handleSend}
                         disabled={!canSend}
                         className={clsx(
-                            "shrink-0 w-8 h-8 flex items-center justify-center rounded-md transition-all",
+                            "h-9 px-3 rounded-md text-[13px] leading-[18px] font-medium transition-all",
+                            "border border-white/10",
                             canSend
-                                ? "bg-accent text-white hover:opacity-90"
-                                : "bg-border-subtle text-tertiary cursor-not-allowed"
+                                ? "bg-[#256BEE] hover:bg-[#1F5BCC] text-white"
+                                : "bg-white/[0.03] text-white/40 cursor-not-allowed"
                         )}
                     >
                         {isSending ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
-                            <ArrowUp className="w-4 h-4" />
+                            "Send"
                         )}
                     </button>
                 </div>
-                <p className="text-caption text-tertiary mt-2 text-center">
-                    Press Enter to send, Shift+Enter for new line
-                </p>
             </div>
         </div>
     );
