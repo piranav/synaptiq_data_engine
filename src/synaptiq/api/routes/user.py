@@ -9,7 +9,8 @@ Provides endpoints for:
 - Account deletion (GDPR)
 """
 
-from typing import Optional
+from typing import Optional, Any
+import asyncio
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -17,9 +18,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from synaptiq.api.middleware.auth import get_current_user
+from synaptiq.api.dependencies import get_mongodb
 from synaptiq.domain.models import User
 from synaptiq.infrastructure.database import get_async_session
 from synaptiq.services.user_service import UserService
+from synaptiq.storage.mongodb import MongoDBStore
 
 logger = structlog.get_logger(__name__)
 
@@ -254,6 +257,95 @@ async def get_stats(
     finally:
         await user_service.close()
 
+
+class DashboardResponse(BaseModel):
+    """Combined dashboard data response."""
+    
+    stats: UserStatsResponse
+    recent_sources: list[dict[str, Any]] = Field(default_factory=list)
+    active_jobs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@router.get(
+    "/dashboard",
+    response_model=DashboardResponse,
+    summary="Get combined dashboard data",
+    description="Returns stats, recent sources, and jobs in a single request for faster dashboard loading.",
+)
+async def get_dashboard(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+    mongodb: MongoDBStore = Depends(get_mongodb),
+):
+    """
+    Get combined dashboard data in a single request.
+    
+    This endpoint fetches stats, recent sources, and active jobs in parallel
+    to reduce dashboard loading time (replaces 3 sequential API calls).
+    """
+    user_service = UserService(session)
+    
+    try:
+        # Fetch all data in parallel
+        stats_task = user_service.get_user_stats(user.id)
+        sources_task = mongodb.list_sources(user.id, limit=5)
+        jobs_task = mongodb.list_jobs(user.id, limit=5)
+        
+        stats, sources, jobs = await asyncio.gather(
+            stats_task,
+            sources_task,
+            jobs_task,
+            return_exceptions=True,
+        )
+        
+        # Handle any errors gracefully
+        if isinstance(stats, Exception):
+            logger.warning("Failed to get stats", error=str(stats))
+            stats = UserStatsResponse(
+                concepts_count=0, sources_count=0, chunks_count=0,
+                definitions_count=0, relationships_count=0, graph_uri=None
+            )
+        else:
+            stats = UserStatsResponse(**stats.to_dict())
+        
+        if isinstance(sources, Exception):
+            logger.warning("Failed to get sources", error=str(sources))
+            sources = []
+        else:
+            # Format sources for response
+            sources = [
+                {
+                    "id": s["id"],
+                    "type": s.get("source_type", "unknown"),
+                    "title": s.get("source_title", "Untitled"),
+                    "url": s.get("source_url", ""),
+                    "time": s.get("ingested_at").isoformat() if hasattr(s.get("ingested_at"), "isoformat") else str(s.get("ingested_at", "")),
+                }
+                for s in sources
+            ]
+        
+        if isinstance(jobs, Exception):
+            logger.warning("Failed to get jobs", error=str(jobs))
+            jobs = []
+        else:
+            jobs = [
+                {
+                    "id": j.id,
+                    "status": j.status.value if hasattr(j.status, "value") else str(j.status),
+                    "source_type": j.source_type,
+                    "source_url": j.source_url,
+                    "created_at": j.created_at.isoformat() if hasattr(j.created_at, "isoformat") else str(j.created_at),
+                }
+                for j in jobs
+            ]
+        
+        return DashboardResponse(
+            stats=stats,
+            recent_sources=sources,
+            active_jobs=jobs,
+        )
+    finally:
+        await user_service.close()
 
 @router.post(
     "/export",

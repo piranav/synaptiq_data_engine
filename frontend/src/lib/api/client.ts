@@ -39,11 +39,32 @@ class ApiClient {
                 // optional: event emit or redirect
             }
 
-            const data = await response.json();
+            // Handle 204 No Content (common for DELETE requests)
+            if (response.status === 204 || response.headers.get("content-length") === "0") {
+                if (!response.ok) {
+                    throw new Error(`Request failed with status ${response.status}`);
+                }
+                return { data: null, status: response.status, ok: response.ok };
+            }
 
-            // If the API returns a structured error, throw it?
+            // For DELETE requests, treat 404 as success (idempotent - already deleted)
+            if (options.method === "DELETE" && response.status === 404) {
+                return { data: null, status: 204, ok: true };
+            }
+
+            // Try to parse JSON, handle empty body gracefully
+            let data = null;
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.includes("application/json")) {
+                const text = await response.text();
+                if (text) {
+                    data = JSON.parse(text);
+                }
+            }
+
+            // If the API returns a structured error, throw it
             if (!response.ok) {
-                throw new Error(data.message || data.detail || `Request failed with status ${response.status}`);
+                throw new Error(data?.message || data?.detail || `Request failed with status ${response.status}`);
             }
 
             return { data, status: response.status, ok: response.ok };

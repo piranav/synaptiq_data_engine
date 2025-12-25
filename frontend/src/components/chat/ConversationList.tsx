@@ -159,21 +159,23 @@ export function ConversationList({
                                             </p>
                                         )}
                                     </div>
-                                    <span className="text-[11px] leading-[16px] text-white/40 shrink-0">
-                                        {formatTime(conversation.updated_at)}
-                                    </span>
+                                    {/* Time / Delete button container */}
+                                    <div className="relative shrink-0 flex items-center">
+                                        <span className="text-[11px] leading-[16px] text-white/40 group-hover:opacity-0 transition-opacity">
+                                            {formatTime(conversation.updated_at)}
+                                        </span>
+                                        {/* Delete button - appears on hover */}
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onDelete(conversation.id);
+                                            }}
+                                            className="absolute inset-0 flex items-center justify-center p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-rose-500/20 text-white/60 hover:text-rose-400 transition-all"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
+                                        </button>
+                                    </div>
                                 </div>
-
-                                {/* Delete button on hover */}
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        onDelete(conversation.id);
-                                    }}
-                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-rose-500/20 text-white/60 hover:text-rose-400 transition-all"
-                                >
-                                    <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
-                                </button>
                             </div>
                         ))}
                     </div>

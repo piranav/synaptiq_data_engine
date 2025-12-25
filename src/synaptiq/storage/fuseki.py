@@ -675,33 +675,68 @@ class FusekiStore:
         Returns:
             Dict with concept count, chunk count, etc.
         """
-        sparql = """
-        SELECT 
-            (COUNT(DISTINCT ?concept) AS ?conceptCount)
-            (COUNT(DISTINCT ?chunk) AS ?chunkCount)
-            (COUNT(DISTINCT ?source) AS ?sourceCount)
-            (COUNT(DISTINCT ?def) AS ?definitionCount)
+        # Use separate COUNT queries to avoid Cartesian product from OPTIONAL
+        # Each count is independent and fast
+        concept_sparql = """
+        SELECT (COUNT(DISTINCT ?concept) AS ?count)
+        WHERE { ?concept a syn:Concept }
+        """
+        
+        chunk_sparql = """
+        SELECT (COUNT(DISTINCT ?chunk) AS ?count)
+        WHERE { ?chunk a syn:Chunk }
+        """
+        
+        source_sparql = """
+        SELECT (COUNT(DISTINCT ?source) AS ?count)
+        WHERE { ?source a syn:Source }
+        """
+        
+        definition_sparql = """
+        SELECT (COUNT(DISTINCT ?def) AS ?count)
+        WHERE { ?def a syn:Definition }
+        """
+        
+        relationship_sparql = """
+        SELECT (COUNT(*) AS ?count)
         WHERE {
-            OPTIONAL { ?concept a syn:Concept }
-            OPTIONAL { ?chunk a syn:Chunk }
-            OPTIONAL { ?source a syn:Source }
-            OPTIONAL { ?def a syn:Definition }
+            ?s ?relType ?o .
+            ?s a syn:Concept .
+            ?o a syn:Concept .
+            FILTER(?relType IN (
+                syn:isA, syn:partOf, syn:prerequisiteFor, 
+                syn:relatedTo, syn:oppositeOf, syn:usedIn
+            ))
         }
         """
         
-        results = await self.query(user_id, sparql)
-        if results:
-            return {
-                "concept_count": int(results[0].get("conceptCount", 0)),
-                "chunk_count": int(results[0].get("chunkCount", 0)),
-                "source_count": int(results[0].get("sourceCount", 0)),
-                "definition_count": int(results[0].get("definitionCount", 0)),
-            }
+        # Execute all queries in parallel using asyncio.gather
+        import asyncio
+        
+        results = await asyncio.gather(
+            self.query(user_id, concept_sparql),
+            self.query(user_id, chunk_sparql),
+            self.query(user_id, source_sparql),
+            self.query(user_id, definition_sparql),
+            self.query(user_id, relationship_sparql),
+            return_exceptions=True
+        )
+        
+        # Extract counts safely
+        def safe_count(result, default=0):
+            if isinstance(result, Exception):
+                logger.warning("Stats query failed", error=str(result))
+                return default
+            if result and len(result) > 0:
+                return int(result[0].get("count", default))
+            return default
+        
         return {
-            "concept_count": 0,
-            "chunk_count": 0,
-            "source_count": 0,
-            "definition_count": 0,
+            "concept_count": safe_count(results[0]),
+            "chunk_count": safe_count(results[1]),
+            "source_count": safe_count(results[2]),
+            "definition_count": safe_count(results[3]),
+            "relationship_count": safe_count(results[4]),
         }
 
     async def close(self) -> None:

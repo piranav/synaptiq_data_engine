@@ -8,6 +8,7 @@ Handles:
 - User deletion with cascade
 """
 
+import time
 from typing import Any, Optional
 
 import structlog
@@ -20,6 +21,10 @@ from synaptiq.storage.fuseki import FusekiStore
 from synaptiq.storage.qdrant import QdrantStore
 
 logger = structlog.get_logger(__name__)
+
+# Simple TTL cache for user stats (avoid recomputing on every request)
+_stats_cache: dict[str, tuple[float, "UserStats"]] = {}
+STATS_CACHE_TTL = 30  # seconds
 
 
 class UserStats:
@@ -221,16 +226,26 @@ class UserService:
         - Fuseki (concepts, relationships)
         - Qdrant (chunks)
         
+        Uses a 30-second TTL cache to avoid expensive recomputation.
+        
         Args:
             user_id: User ID
             
         Returns:
             UserStats with counts
         """
+        # Check cache first
+        now = time.time()
+        if user_id in _stats_cache:
+            cached_time, cached_stats = _stats_cache[user_id]
+            if now - cached_time < STATS_CACHE_TTL:
+                logger.debug("Returning cached stats", user_id=user_id)
+                return cached_stats
+        
         stats = UserStats()
         
         try:
-            # Get graph stats from Fuseki
+            # Get graph stats from Fuseki (now optimized with parallel queries)
             graph_stats = await self.graph_manager.get_graph_statistics(user_id)
             stats.concepts_count = graph_stats.get("concept_count", 0)
             stats.sources_count = graph_stats.get("source_count", 0)
@@ -250,6 +265,9 @@ class UserService:
             
         except Exception as e:
             logger.warning("Failed to get vector stats", user_id=user_id, error=str(e))
+        
+        # Store in cache
+        _stats_cache[user_id] = (now, stats)
         
         return stats
     

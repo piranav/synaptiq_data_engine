@@ -86,16 +86,20 @@ export default function ChatPage() {
     };
 
     const handleDeleteConversation = async (id: string) => {
+        // Optimistically remove from UI first
+        setConversations((prev) => prev.filter((c) => c.id !== id));
+
+        if (activeConversationId === id) {
+            const remaining = conversations.filter((c) => c.id !== id);
+            setActiveConversationId(remaining.length > 0 ? remaining[0].id : null);
+        }
+
         try {
             await chatService.deleteConversation(id);
-            setConversations((prev) => prev.filter((c) => c.id !== id));
-
-            if (activeConversationId === id) {
-                const remaining = conversations.filter((c) => c.id !== id);
-                setActiveConversationId(remaining.length > 0 ? remaining[0].id : null);
-            }
         } catch (error) {
-            console.error("Failed to delete conversation", error);
+            // Silently handle - conversation may already be deleted (404)
+            // We've already removed it from the UI, so no action needed
+            console.warn("Delete conversation request failed (may already be deleted)", id);
         }
     };
 
@@ -162,7 +166,7 @@ export default function ChatPage() {
             />
 
             {/* Main Chat Area */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden items-center">
+            <div className="flex-1 flex flex-col h-full overflow-hidden">
                 {activeConversationId || messages.length > 0 ? (
                     <>
                         {/* Messages */}

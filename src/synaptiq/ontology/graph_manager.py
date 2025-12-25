@@ -187,35 +187,12 @@ class GraphManager:
         Returns:
             Dict with concept count, relationships, sources, etc.
         """
+        # get_graph_stats now includes all counts (concepts, chunks, sources,
+        # definitions, relationships) computed in parallel
         stats = await self.fuseki.get_graph_stats(user_id)
         
-        # Add additional stats
+        # Add graph URI
         stats["graph_uri"] = build_user_graph_uri(user_id)
-        
-        # Get relationship counts by type
-        rel_sparql = """
-        SELECT ?relType (COUNT(*) AS ?count)
-        WHERE {
-            ?s ?relType ?o .
-            ?s a syn:Concept .
-            ?o a syn:Concept .
-            FILTER(?relType IN (
-                syn:isA, syn:partOf, syn:prerequisiteFor, 
-                syn:relatedTo, syn:oppositeOf, syn:usedIn
-            ))
-        }
-        GROUP BY ?relType
-        """
-        
-        try:
-            rel_results = await self.fuseki.query(user_id, rel_sparql)
-            stats["relationships_by_type"] = {
-                r.get("relType", "").split("#")[-1]: int(r.get("count", 0))
-                for r in rel_results
-            }
-        except Exception as e:
-            logger.warning("Failed to get relationship stats", error=str(e))
-            stats["relationships_by_type"] = {}
         
         return stats
 

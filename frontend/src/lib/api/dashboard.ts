@@ -112,6 +112,62 @@ export class DashboardService {
         }
     }
 
+    /**
+     * Get all dashboard data in a single optimized request.
+     * This replaces getStats() + getRecentActivity() with a single API call.
+     */
+    async getDashboard(): Promise<{
+        stats: DashboardStats | null;
+        activity: ActivityItem[];
+    }> {
+        try {
+            const token = this.getToken();
+            const res = await fetch(`${API_BASE_URL}/user/dashboard`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+
+            if (res.status === 401) return { stats: null, activity: [] };
+            if (!res.ok) throw new Error("Failed to fetch dashboard");
+
+            const data = await res.json();
+
+            // Map sources to activity items
+            const sourceItems: ActivityItem[] = (data.recent_sources || []).map((s: any) => ({
+                id: s.id,
+                type: s.type,
+                title: s.title,
+                source: this.formatSourceUrl(s.url),
+                time: s.time,
+                status: "completed" as const,
+            }));
+
+            // Map jobs to activity items
+            const jobItems: ActivityItem[] = (data.active_jobs || [])
+                .filter((j: any) => j.status !== "completed")
+                .map((j: any) => ({
+                    id: j.id,
+                    type: j.source_type || "unknown",
+                    title: j.source_url,
+                    source: "Ingesting...",
+                    time: j.created_at,
+                    status: j.status as "processing" | "failed",
+                }));
+
+            // Merge and sort
+            const activity = [...jobItems, ...sourceItems]
+                .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+                .slice(0, 5);
+
+            return {
+                stats: data.stats,
+                activity,
+            };
+        } catch (error) {
+            console.error("getDashboard failed", error);
+            return { stats: null, activity: [] };
+        }
+    }
+
     async getActiveJobs(): Promise<Job[]> {
         try {
             const token = this.getToken();

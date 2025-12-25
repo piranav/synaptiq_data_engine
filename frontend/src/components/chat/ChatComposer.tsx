@@ -47,8 +47,8 @@ export function ChatComposer({
     const canSend = content.trim().length > 0 && !isSending && !disabled;
 
     return (
-        <div className="border-t border-white/10 px-4 md:px-8 lg:px-16 py-3 bg-black/20 backdrop-blur">
-            <div className="max-w-3xl mx-auto">
+        <div className="w-full border-t border-white/10 px-4 md:px-8 lg:px-16 py-3 bg-black/20 backdrop-blur">
+            <div className="max-w-3xl mx-auto w-full">
                 <div className="flex items-end gap-2">
                     {/* Input Area */}
                     <div
