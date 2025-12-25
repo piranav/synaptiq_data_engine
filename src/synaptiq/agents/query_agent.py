@@ -345,6 +345,88 @@ class QueryAgent:
         
         return enrichments
     
+    def _extract_sources_from_retrieval(
+        self,
+        retrieval_results: dict,
+    ) -> list[dict]:
+        """Extract source information from retrieval results."""
+        sources = []
+        source = retrieval_results.get("source", "")
+        results = retrieval_results.get("results", [])
+        
+        if source == "vector":
+            for r in results:
+                payload = r.get("payload", {})
+                sources.append({
+                    "title": payload.get("source_title", ""),
+                    "url": payload.get("source_url", ""),
+                    "type": payload.get("source_type", ""),
+                    "text": payload.get("text", "")[:200],
+                    "timestamp": payload.get("timestamp_start_ms"),
+                })
+        elif source == "graph":
+            for r in results:
+                details = r.get("details", {})
+                sources.append({
+                    "title": details.get("sourceTitle", "") or r.get("entity", ""),
+                    "url": details.get("sourceUrl", ""),
+                    "type": "graph",
+                    "text": details.get("definitionText", "")[:200] if details.get("definitionText") else "",
+                })
+        elif source == "hybrid":
+            vector = results.get("vector", [])
+            graph = results.get("graph", [])
+            for r in vector:
+                payload = r.get("payload", {})
+                sources.append({
+                    "title": payload.get("source_title", ""),
+                    "url": payload.get("source_url", ""),
+                    "type": payload.get("source_type", ""),
+                    "text": payload.get("text", "")[:200],
+                })
+            for r in graph:
+                details = r.get("details", {})
+                sources.append({
+                    "title": details.get("sourceTitle", "") or r.get("entity", ""),
+                    "url": details.get("sourceUrl", ""),
+                    "type": "graph",
+                    "text": details.get("definitionText", "")[:200] if details.get("definitionText") else "",
+                })
+        
+        return sources
+    
+    def _enrich_citations(
+        self,
+        response: QueryResponse,
+        retrieval_results: dict,
+    ) -> QueryResponse:
+        """
+        Enrich citations with actual source information from retrieval.
+        
+        The LLM synthesizer may not correctly populate source titles,
+        so we post-process to inject actual source info from retrieval results.
+        """
+        sources = self._extract_sources_from_retrieval(retrieval_results)
+        
+        if not sources or not response.citations:
+            return response
+        
+        # Map citations to sources by index
+        for i, citation in enumerate(response.citations):
+            if i < len(sources):
+                src = sources[i]
+                # Only replace if LLM didn't provide a good title
+                if not citation.title or citation.title == "Unknown" or len(citation.title) < 3:
+                    citation.title = src.get("title") or citation.title
+                # Always set URL if available and not already set
+                if not citation.url and src.get("url"):
+                    citation.url = src.get("url")
+                # Set source type if not set
+                if not citation.source_type or citation.source_type == "unknown":
+                    citation.source_type = src.get("type", "unknown")
+        
+        return response
+    
     def _format_synthesis_input(
         self,
         query: str,
@@ -486,6 +568,9 @@ class QueryAgent:
             )
             
             response: QueryResponse = response_result.final_output
+            
+            # Post-process citations to inject actual source titles from retrieval
+            response = self._enrich_citations(response, retrieval_results)
             
             # Add retrieval metadata
             response.retrieval_metadata = RetrievalMetadata(
