@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from config.settings import get_settings
 from synaptiq.api.dependencies import cleanup_resources
-from synaptiq.api.routes import auth, ingest, jobs, search, sources, chat, user
+from synaptiq.api.routes import auth, ingest, jobs, search, sources, chat, user, graph
 from synaptiq.api.middleware.auth import AuthMiddleware
 from synaptiq.core.exceptions import SynaptiqError
 from synaptiq.infrastructure.database import close_db
@@ -161,6 +161,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(sources.router)
     app.include_router(chat.router)
+    app.include_router(graph.router)
 
     # Health check endpoint
     @app.get("/health", tags=["Health"])

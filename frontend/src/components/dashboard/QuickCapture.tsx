@@ -1,71 +1,54 @@
 "use client";
 
-import { Link as LinkIcon, Upload, FileText, ArrowRight } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Link as LinkIcon, Upload, StickyNote, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { AddSourceModal } from "./AddSourceModal";
 
 export function QuickCapture() {
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [initialTab, setInitialTab] = useState<"url" | "file">("url");
+    const [isWrapperOpen, setIsWrapperOpen] = useState(false);
+    const [clickPosition, setClickPosition] = useState({ x: 0, y: 0 });
 
-    const openModal = (tab: "url" | "file") => {
-        setInitialTab(tab);
-        setIsModalOpen(true);
+    const handleWrapperClick = (e: React.MouseEvent) => {
+        setClickPosition({ x: e.clientX, y: e.clientY });
+        setIsWrapperOpen(true);
     };
 
     return (
-        <>
-            <div className="bg-surface border border-border rounded-lg shadow-card p-6 mb-8">
-                <div className="flex flex-col gap-4">
-                    <input
-                        type="text"
-                        placeholder="Add to your knowledge..."
-                        className="text-title-2 bg-transparent border-none placeholder:text-tertiary focus:outline-none w-full"
-                        onClick={() => openModal("url")}
-                    />
-
-                    <div className="flex items-center gap-2">
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="gap-2 text-secondary"
-                            onClick={() => openModal("url")}
-                        >
-                            <LinkIcon className="w-4 h-4" />
-                            <span>URL</span>
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="gap-2 text-secondary"
-                            onClick={() => openModal("file")}
-                        >
-                            <Upload className="w-4 h-4" />
-                            <span>Upload</span>
-                        </Button>
-                        <Button variant="ghost" size="sm" className="gap-2 text-secondary">
-                            <FileText className="w-4 h-4" />
-                            <span>Note</span>
-                        </Button>
-                        <div className="flex-1" />
-                        <Button
-                            variant="primary"
-                            size="sm"
-                            className="rounded-full"
-                            onClick={() => openModal("url")}
-                        >
-                            <ArrowRight className="w-4 h-4" />
-                        </Button>
-                    </div>
+        <section className="relative group mb-10">
+            <div
+                className="bg-surface rounded-2xl shadow-glow p-1.5 flex items-center transition-shadow duration-300 hover:shadow-float border border-transparent hover:border-black/5 cursor-text"
+                onClick={handleWrapperClick}
+            >
+                <div className="pl-4 pr-3 text-secondary">
+                    <Sparkles className="w-[18px] h-[18px] text-accent" />
+                </div>
+                <input
+                    type="text"
+                    placeholder="Paste a URL, drop a file, or start typing a note..."
+                    className="flex-1 h-12 bg-transparent border-none outline-none text-primary placeholder-secondary/70 text-base font-normal box-border"
+                    readOnly // prevent typing until modal opens for now, or true input
+                />
+                <div className="flex items-center gap-1.5 pr-1.5">
+                    <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-canvas text-secondary hover:text-primary hover:bg-gray-200/50 transition-colors text-xs font-medium">
+                        <LinkIcon className="w-3.5 h-3.5" />
+                        <span>URL</span>
+                    </button>
+                    <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-canvas text-secondary hover:text-primary hover:bg-gray-200/50 transition-colors text-xs font-medium">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload</span>
+                    </button>
+                    <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-canvas text-secondary hover:text-primary hover:bg-gray-200/50 transition-colors text-xs font-medium">
+                        <StickyNote className="w-3.5 h-3.5" />
+                        <span>Note</span>
+                    </button>
                 </div>
             </div>
 
             <AddSourceModal
-                isOpen={isModalOpen}
-                onClose={() => setIsModalOpen(false)}
-                initialTab={initialTab}
+                isOpen={isWrapperOpen}
+                onClose={() => setIsWrapperOpen(false)}
+                clickPosition={clickPosition}
             />
-        </>
+        </section>
     );
 }

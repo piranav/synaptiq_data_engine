@@ -223,10 +223,67 @@ class GraphManager:
     # GRAPH TRAVERSAL
     # ═══════════════════════════════════════════════════════════════════════════════
 
+    async def _get_root_concepts(self, user_id: str) -> dict[str, Any]:
+        """
+        Get top-level concepts for the user's graph (root view).
+        
+        Returns concepts that have outgoing relationships but fewer incoming ones,
+        or simply the most connected concepts as starting points for exploration.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            Dict with a virtual "root" node and top-level concepts as relationships
+        """
+        # Get top concepts by number of relationships
+        sparql = """
+        SELECT ?concept ?label (COUNT(?related) AS ?connections)
+        WHERE {
+            ?concept a syn:Concept ;
+                     syn:label ?label .
+            OPTIONAL {
+                { ?concept ?rel ?related . ?related a syn:Concept . }
+                UNION
+                { ?related ?rel ?concept . ?related a syn:Concept . }
+            }
+        }
+        GROUP BY ?concept ?label
+        ORDER BY DESC(?connections)
+        LIMIT 20
+        """
+        
+        try:
+            results = await self.fuseki.query(user_id, sparql)
+            
+            # Extract concept labels as "children" of root
+            top_concepts = [r.get("label", "") for r in results if r.get("label")]
+            
+            return {
+                "found": True,
+                "uri": f"synaptiq:root:{user_id}",
+                "label": "Knowledge Graph",
+                "definition": "Your personal knowledge graph. Click on concepts to explore.",
+                "source": None,
+                "relationships": {
+                    "contains": top_concepts,
+                },
+            }
+        except Exception as e:
+            logger.warning("Failed to get root concepts", user_id=user_id, error=str(e))
+            return {
+                "found": True,
+                "uri": f"synaptiq:root:{user_id}",
+                "label": "Knowledge Graph",
+                "definition": "Your knowledge graph is empty. Start by ingesting some content!",
+                "source": None,
+                "relationships": {},
+            }
+
     async def get_concept_neighborhood(
         self,
         user_id: str,
-        concept_label: str,
+        concept_label: Optional[str] = None,
         depth: int = 1,
     ) -> dict[str, Any]:
         """
@@ -234,12 +291,16 @@ class GraphManager:
         
         Args:
             user_id: User identifier
-            concept_label: Concept label to explore
+            concept_label: Concept label to explore (None returns top-level concepts)
             depth: How many hops to traverse (1 = direct relations only)
             
         Returns:
             Dict with concept details, definitions, and relationships
         """
+        # If no concept specified, return root/top-level concepts
+        if not concept_label:
+            return await self._get_root_concepts(user_id)
+        
         # First find the concept
         find_concept_sparql = f"""
         SELECT ?concept ?label ?altLabel
@@ -254,15 +315,23 @@ class GraphManager:
         
         results = await self.fuseki.query(user_id, find_concept_sparql)
         if not results:
-            return {"found": False, "label": concept_label}
+            logger.info("Concept not found", concept_label=concept_label, user_id=user_id)
+            return {"found": False, "label": concept_label, "uri": "", "relationships": {}}
         
         concept_uri = results[0].get("concept")
+        logger.info("Found concept", concept_label=concept_label, concept_uri=concept_uri)
         
         # Get concept details
         details = await self.fuseki.get_concept_with_definition(user_id, concept_uri)
         
         # Get relationships
         relationships = await self.fuseki.get_concept_relationships(user_id, concept_uri)
+        logger.info(
+            "Fetched relationships",
+            concept_label=concept_label,
+            relationship_count=len(relationships),
+            relationships=relationships[:5] if relationships else [],  # Log first 5
+        )
         
         # Organize by relationship type
         outgoing: dict[str, list[str]] = {}
@@ -275,7 +344,7 @@ class GraphManager:
             
             # Determine direction by checking if this concept is subject or object
             # This is a simplification; proper implementation would check actual direction
-            if rel_type:
+            if rel_type and related_label:
                 if rel_type not in outgoing:
                     outgoing[rel_type] = []
                 outgoing[rel_type].append(related_label)

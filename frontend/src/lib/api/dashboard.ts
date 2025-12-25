@@ -36,92 +36,98 @@ export class DashboardService {
         return tokens.access_token;
     }
 
-    async getStats(): Promise<DashboardStats> {
-        const token = this.getToken();
-        const res = await fetch(`${API_BASE_URL}/user/stats`, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
+    async getStats(): Promise<DashboardStats | null> {
+        try {
+            const token = this.getToken();
+            const res = await fetch(`${API_BASE_URL}/user/stats`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
 
-        if (!res.ok) {
-            const text = await res.text();
-            console.error(`getStats failed: ${res.status} ${res.statusText}`, text);
-            throw new Error(`Failed to fetch stats: ${res.status} ${res.statusText}`);
+            if (res.status === 401) return null;
+            if (!res.ok) throw new Error("Failed to fetch stats");
+
+            return res.json();
+        } catch (error) {
+            console.error("getStats failed", error);
+            return null;
         }
-
-        return res.json();
     }
 
     async getRecentActivity(limit: number = 5): Promise<ActivityItem[]> {
-        const token = this.getToken();
+        try {
+            const token = this.getToken();
 
-        // 1. Fetch recent sources (completed)
-        const sourcesRes = await fetch(`${API_BASE_URL}/sources?limit=${limit}`, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
+            // 1. Fetch recent sources (completed)
+            const sourcesRes = await fetch(`${API_BASE_URL}/sources?limit=${limit}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
 
-        // 2. Fetch active/recent jobs (processing/failed)
-        const jobsRes = await fetch(`${API_BASE_URL}/jobs?limit=${limit}`, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
+            if (sourcesRes.status === 401) return [];
 
-        if (!sourcesRes.ok) {
-            const text = await sourcesRes.text();
-            console.error(`fetch sources failed: ${sourcesRes.status} ${sourcesRes.statusText}`, text);
-            throw new Error("Failed to fetch activity");
-        }
+            // 2. Fetch active/recent jobs (processing/failed)
+            const jobsRes = await fetch(`${API_BASE_URL}/jobs?limit=${limit}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
 
-        if (!jobsRes.ok) {
-            const text = await jobsRes.text();
-            console.error(`fetch jobs failed: ${jobsRes.status} ${jobsRes.statusText}`, text);
-            throw new Error("Failed to fetch activity");
-        }
+            if (jobsRes.status === 401) return [];
 
-        const sourcesData = await sourcesRes.json();
-        const jobsData = await jobsRes.json();
+            if (!sourcesRes.ok || !jobsRes.ok) {
+                return [];
+            }
 
-        // Map sources to activity items
-        const sourceItems: ActivityItem[] = sourcesData.sources.map((s: any) => ({
-            id: s.id,
-            type: s.source_type,
-            title: s.source_title,
-            source: this.formatSourceUrl(s.source_url),
-            time: s.ingested_at,
-            status: "completed",
-        }));
+            const sourcesData = await sourcesRes.json();
+            const jobsData = await jobsRes.json();
 
-        // Map jobs to activity items (only if not already in sources, simplified logic for now)
-        // We prioritize jobs that are NOT completed, as completed ones should be in sources
-        const jobItems: ActivityItem[] = jobsData.jobs
-            .filter((j: any) => j.status !== "completed")
-            .map((j: any) => ({
-                id: j.id,
-                type: j.source_type || "unknown",
-                title: j.source_url, // We don't have title for jobs yet
-                source: "Ingesting...",
-                time: j.created_at,
-                status: j.status,
+            // Map sources to activity items
+            const sourceItems: ActivityItem[] = sourcesData.sources.map((s: any) => ({
+                id: s.id,
+                type: s.source_type,
+                title: s.source_title,
+                source: this.formatSourceUrl(s.source_url),
+                time: s.ingested_at,
+                status: "completed",
             }));
 
-        // Merge and sort
-        const allItems = [...jobItems, ...sourceItems]
-            .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-            .slice(0, limit);
+            // Map jobs to activity items
+            const jobItems: ActivityItem[] = jobsData.jobs
+                .filter((j: any) => j.status !== "completed")
+                .map((j: any) => ({
+                    id: j.id,
+                    type: j.source_type || "unknown",
+                    title: j.source_url,
+                    source: "Ingesting...",
+                    time: j.created_at,
+                    status: j.status,
+                }));
 
-        return allItems;
+            // Merge and sort
+            const allItems = [...jobItems, ...sourceItems]
+                .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+                .slice(0, limit);
+
+            return allItems;
+        } catch (error) {
+            console.error("getRecentActivity failed", error);
+            return [];
+        }
     }
 
     async getActiveJobs(): Promise<Job[]> {
-        const token = this.getToken();
-        const res = await fetch(`${API_BASE_URL}/jobs?status=processing`, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
+        try {
+            const token = this.getToken();
+            const res = await fetch(`${API_BASE_URL}/jobs?status=processing`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
 
-        if (!res.ok) {
-            console.error(`getActiveJobs failed: ${res.status} ${res.statusText}`);
+            if (res.status === 401) return [];
+            if (!res.ok) return [];
+
+            const data = await res.json();
+            return data.jobs;
+        } catch (error) {
+            // silent fail for polling
             return [];
         }
-        const data = await res.json();
-        return data.jobs;
     }
 
     private formatSourceUrl(url: string): string {

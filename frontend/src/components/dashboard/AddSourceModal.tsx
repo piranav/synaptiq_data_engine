@@ -11,9 +11,10 @@ interface AddSourceModalProps {
     isOpen: boolean;
     onClose: () => void;
     initialTab?: "url" | "file";
+    clickPosition?: { x: number; y: number };
 }
 
-export function AddSourceModal({ isOpen, onClose, initialTab = "url" }: AddSourceModalProps) {
+export function AddSourceModal({ isOpen, onClose, initialTab = "url", clickPosition }: AddSourceModalProps) {
     const [activeTab, setActiveTab] = useState<"url" | "file">(initialTab);
     const [url, setUrl] = useState("");
     const [file, setFile] = useState<File | null>(null);
