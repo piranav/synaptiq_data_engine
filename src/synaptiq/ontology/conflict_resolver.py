@@ -124,7 +124,7 @@ class ConflictResolver:
     def __init__(
         self,
         fuseki_store: Optional[FusekiStore] = None,
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-4.1",
         similarity_threshold: float = 0.85,
     ):
         """

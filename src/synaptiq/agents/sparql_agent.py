@@ -69,7 +69,7 @@ def create_sparql_agent(
     return Agent[AgentContext](
         name="SPARQL Agent",
         instructions=instructions,
-        model="gpt-4.1",
+        model="gpt-5.2-Codex",
         tools=[
             execute_sparql,
             get_concept_details,

@@ -201,7 +201,7 @@ class ConceptExtractor(BaseProcessor):
 
     def __init__(
         self,
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-4.1",
         extract_concepts: bool = True,
         detect_definitions: bool = True,
         extract_claims: bool = True,
@@ -216,7 +216,7 @@ class ConceptExtractor(BaseProcessor):
         Initialize the concept extractor.
         
         Args:
-            model: OpenAI model to use (default: gpt-4o-mini for cost efficiency)
+            model: OpenAI model to use (default: gpt-4.1)
             extract_concepts: Whether to extract concepts
             detect_definitions: Whether to detect definitions
             extract_claims: Whether to extract claims

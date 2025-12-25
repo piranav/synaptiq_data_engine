@@ -15,6 +15,7 @@ class IntentType(str, Enum):
     RELATIONSHIP = "RELATIONSHIP"  # "How does X relate to Y?"
     SOURCE_RECALL = "SOURCE_RECALL"  # "What did I learn from [source]?"
     SEMANTIC_SEARCH = "SEMANTIC_SEARCH"  # "Find notes about..."
+    INVENTORY = "INVENTORY"  # "List all concepts", "What have I learned?"
     GENERAL = "GENERAL"  # No personal knowledge signals
 
 

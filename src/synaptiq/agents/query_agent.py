@@ -92,7 +92,7 @@ class QueryAgent:
         self.intent_classifier = Agent[AgentContext](
             name="Intent Classifier",
             instructions=INTENT_CLASSIFIER_SYSTEM_PROMPT,
-            model="gpt-4.1",
+            model="gpt-5.2",
             output_type=IntentClassification,
         )
         
@@ -106,7 +106,7 @@ class QueryAgent:
         self.synthesizer = Agent[AgentContext](
             name="Response Synthesizer",
             instructions=RESPONSE_SYNTHESIZER_SYSTEM_PROMPT,
-            model="gpt-4.1",
+            model="gpt-5.2",
             output_type=QueryResponse,
         )
         
@@ -114,7 +114,7 @@ class QueryAgent:
         self.orchestrator = Agent[AgentContext](
             name="Query Orchestrator",
             instructions=ORCHESTRATOR_SYSTEM_PROMPT,
-            model="gpt-4.1",
+            model="gpt-5.2",
             tools=[
                 vector_search,
                 get_concept_details,
@@ -143,6 +143,7 @@ class QueryAgent:
             IntentType.RELATIONSHIP: RetrievalStrategy.GRAPH_ONLY,
             IntentType.SOURCE_RECALL: RetrievalStrategy.GRAPH_ONLY,
             IntentType.SEMANTIC_SEARCH: RetrievalStrategy.VECTOR_FIRST,
+            IntentType.INVENTORY: RetrievalStrategy.GRAPH_ONLY,
             IntentType.GENERAL: RetrievalStrategy.LLM_ONLY,
         }
         return mapping.get(intent.intent, RetrievalStrategy.HYBRID)
@@ -260,6 +261,10 @@ class QueryAgent:
         try:
             results = []
             
+            # Special handling for INVENTORY intent - list all concepts
+            if intent.intent == IntentType.INVENTORY:
+                return await self._query_inventory(context)
+            
             # Look up each entity
             for entity in intent.entities:
                 concept_uri = await context.fuseki_store.concept_exists(
@@ -285,6 +290,54 @@ class QueryAgent:
             
         except Exception as e:
             logger.error("Graph query failed", error=str(e))
+            return []
+    
+    async def _query_inventory(self, context: AgentContext) -> list[dict]:
+        """Query all concepts for inventory/overview requests."""
+        try:
+            # SPARQL to get all concepts with definitions
+            sparql = """
+            SELECT DISTINCT ?label ?definitionText ?sourceTitle
+            WHERE {
+                ?concept a syn:Concept .
+                ?concept syn:label ?label .
+                OPTIONAL {
+                    ?concept syn:hasDefinition ?def .
+                    ?def syn:definitionText ?definitionText .
+                }
+                OPTIONAL {
+                    ?concept syn:definedIn ?chunk .
+                    ?chunk syn:derivedFrom ?source .
+                    ?source syn:sourceTitle ?sourceTitle .
+                }
+            }
+            ORDER BY ?label
+            LIMIT 50
+            """
+            
+            query_results = await context.fuseki_store.query(
+                user_id=context.user_id,
+                sparql=sparql,
+            )
+            
+            logger.info("Inventory query complete", result_count=len(query_results))
+            
+            # Format results - FusekiStore.query() already extracts values from bindings
+            results = []
+            for r in query_results:
+                results.append({
+                    "entity": r.get("label", "Unknown"),
+                    "details": {
+                        "definitionText": r.get("definitionText"),
+                        "sourceTitle": r.get("sourceTitle"),
+                    },
+                    "relationships": [],
+                })
+            
+            return results
+            
+        except Exception as e:
+            logger.error("Inventory query failed", error=str(e))
             return []
     
     async def _query_vector(
