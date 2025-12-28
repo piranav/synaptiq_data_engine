@@ -231,10 +231,18 @@ class GraphManager:
             ?concept a syn:Concept ;
                      syn:label ?label .
             OPTIONAL {
-                # Get source info for this concept
-                ?concept syn:definedIn ?chunk .
-                ?chunk syn:derivedFrom ?source .
-                ?source syn:sourceTitle ?sourceTitle .
+                # Get source info for this concept (check both defined and mentioned)
+                {
+                    ?concept syn:definedIn ?chunk .
+                    ?chunk syn:derivedFrom ?source .
+                    ?source syn:sourceTitle ?sourceTitle .
+                }
+                UNION
+                {
+                    ?concept syn:mentionedIn ?chunk .
+                    ?chunk syn:derivedFrom ?source .
+                    ?source syn:sourceTitle ?sourceTitle .
+                }
             }
             OPTIONAL {
                 {
