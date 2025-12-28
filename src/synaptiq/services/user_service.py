@@ -38,6 +38,7 @@ class UserStats:
         definitions_count: int = 0,
         relationships_count: int = 0,
         graph_uri: Optional[str] = None,
+        growth_percent: Optional[float] = None,  # Week-over-week growth
     ):
         self.concepts_count = concepts_count
         self.sources_count = sources_count
@@ -45,6 +46,7 @@ class UserStats:
         self.definitions_count = definitions_count
         self.relationships_count = relationships_count
         self.graph_uri = graph_uri
+        self.growth_percent = growth_percent
     
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -55,6 +57,7 @@ class UserStats:
             "definitions_count": self.definitions_count,
             "relationships_count": self.relationships_count,
             "graph_uri": self.graph_uri,
+            "growth_percent": self.growth_percent,
         }
 
 
@@ -252,6 +255,38 @@ class UserService:
             stats.definitions_count = graph_stats.get("definition_count", 0)
             stats.relationships_count = graph_stats.get("relationship_count", 0)
             stats.graph_uri = graph_stats.get("graph_uri")
+            
+            # Calculate growth and capture snapshot
+            try:
+                from synaptiq.services.graph_snapshots import GraphSnapshotService
+                snapshot_service = GraphSnapshotService()
+                
+                # Calculate growth (7-day comparison)
+                current_stats = {
+                    "concepts_count": stats.concepts_count,
+                    "connections_count": stats.relationships_count,
+                    "sources_count": stats.sources_count,
+                }
+                growth_data = await snapshot_service.calculate_growth(
+                    user_id, current_stats, days=7
+                )
+                
+                if growth_data.get("has_history") and growth_data.get("concepts_growth_percent") is not None:
+                    stats.growth_percent = growth_data["concepts_growth_percent"]
+                
+                # Capture daily snapshot (uses dedup logic - once per day)
+                latest = await snapshot_service.get_latest_snapshot(user_id)
+                if latest is None or (now - latest.get("timestamp", now).timestamp()) > 86400:
+                    await snapshot_service.capture_snapshot(
+                        user_id=user_id,
+                        concepts_count=stats.concepts_count,
+                        connections_count=stats.relationships_count,
+                        sources_count=stats.sources_count,
+                    )
+                
+                await snapshot_service.close()
+            except Exception as snap_err:
+                logger.debug("Snapshot service error", error=str(snap_err))
             
         except Exception as e:
             logger.warning("Failed to get graph stats", user_id=user_id, error=str(e))

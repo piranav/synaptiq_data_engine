@@ -2,13 +2,13 @@
 
 import { useAuth } from "@/contexts/AuthContext";
 import { dashboardService } from "@/lib/api/dashboard";
-import { BrainCircuit, Quote, Library, Loader2 } from "lucide-react";
+import { BrainCircuit, Link2, Library, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface StatsData {
     concepts_count: number;
     sources_count: number;
-    definitions_count: number;
+    relationships_count: number;  // Connections between concepts
 }
 
 export function StatsRow() {
@@ -48,13 +48,13 @@ export function StatsRow() {
             icon: BrainCircuit,
             color: "text-[#60a5fa]",
             bg: "bg-[#60a5fa]/10",
-            trend: "+24",
-            trendColor: "text-emerald-400 bg-emerald-400/10"
+            trend: null,
+            trendColor: null
         },
         {
-            label: "Definitions",
-            value: stats?.definitions_count ?? 0,
-            icon: Quote,
+            label: "Connections",
+            value: stats?.relationships_count ?? 0,
+            icon: Link2,
             color: "text-[#a78bfa]",
             bg: "bg-[#a78bfa]/10",
             trend: null,

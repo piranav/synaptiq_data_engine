@@ -5,18 +5,57 @@ import { QuickCapture } from "@/components/dashboard/QuickCapture";
 import { StatsRow } from "@/components/dashboard/StatsRow";
 import { PoincareDisk } from "@/components/graph/PoincareDisk";
 import { RecentActivity } from "@/components/dashboard/RecentActivity";
+import { dashboardService } from "@/lib/api/dashboard";
 import Link from "next/link";
 import { Maximize2 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export default function HomePage() {
     const { user } = useAuth();
     const firstName = user?.name?.split(" ")[0] || "there";
+    const [growthPercent, setGrowthPercent] = useState<number | null>(null);
+
+    // Fetch growth percentage from stats
+    useEffect(() => {
+        if (!user) return;
+
+        const fetchGrowth = async () => {
+            try {
+                const stats = await dashboardService.getStats();
+                if (stats?.growth_percent !== null && stats?.growth_percent !== undefined) {
+                    setGrowthPercent(stats.growth_percent);
+                }
+            } catch (err) {
+                console.error("Failed to fetch growth", err);
+            }
+        };
+
+        fetchGrowth();
+    }, [user]);
+
+    // Generate greeting based on time of day
+    const getGreeting = () => {
+        const hour = new Date().getHours();
+        if (hour < 12) return "Good morning";
+        if (hour < 17) return "Good afternoon";
+        return "Good evening";
+    };
+
+    // Generate subtitle based on growth
+    const getSubtitle = () => {
+        if (growthPercent !== null && growthPercent > 0) {
+            return `Your graph has grown by ${growthPercent}% this week. Ready to capture?`;
+        } else if (growthPercent === 0) {
+            return "Your graph is stable. Ready to add more knowledge?";
+        }
+        return "Ready to capture some knowledge?";
+    };
 
     return (
         <div className="max-w-[1024px] mx-auto px-8 py-10 flex flex-col gap-10 animation-fade-in-up">
             <section>
-                <h1 className="text-3xl font-medium tracking-tight text-primary mb-2">Good morning, {firstName}</h1>
-                <p className="text-secondary font-normal text-sm">Your graph has grown by 12% this week. Ready to capture?</p>
+                <h1 className="text-3xl font-medium tracking-tight text-primary mb-2">{getGreeting()}, {firstName}</h1>
+                <p className="text-secondary font-normal text-sm">{getSubtitle()}</p>
             </section>
 
             <QuickCapture />
