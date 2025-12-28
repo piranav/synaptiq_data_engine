@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useId, useCallback } from "react";
 import { graphApi, GraphNeighborhood } from "@/lib/api/graph";
 import { transformToJITFormat, SWISS_COLORS } from "@/lib/graph/adapter";
-import { GraphLegend } from "@/components/graph/GraphLegend";
+import { NodeInfo } from "@/components/graph/GraphSidebar";
 
 // We need to tell TS about $jit on window if we import it
 declare global {
@@ -14,12 +14,15 @@ declare global {
 
 interface PoincareDiskProps {
     centerNode?: string | null;
+    userName?: string;  // For root node name
     onNodeClick?: (nodeId: string, nodeLabel: string) => void;
+    onCenterChange?: (centeredNode: NodeInfo | null, adjacentNodes: NodeInfo[]) => void;
+    onHypertreeReady?: (navigateToNode: (nodeId: string) => void) => void;  // Expose navigation
     className?: string;
     isPreview?: boolean;
 }
 
-export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, className, isPreview = false }: PoincareDiskProps) {
+export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeClick, onCenterChange, onHypertreeReady, className, isPreview = false }: PoincareDiskProps) {
     const uniqueId = useId();
     // Remove colons and create a clean ID (no spaces - invalid in HTML IDs)
     const containerId = useRef(`infovis-${uniqueId.replace(/:/g, "")}`);
@@ -168,15 +171,24 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
                     // Called before centering on a node
                 },
                 onCreateLabel: function (domElement: HTMLElement, node: any) {
+                    // Convert text to Pascal Case
+                    const toPascalCase = (str: string): string => {
+                        return str
+                            .split(/[\s_-]+/)
+                            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                            .join(' ');
+                    };
+
                     // Build label with relationship type if available
                     const relLabel = node.data?.relationLabel;
                     const isClickable = node.id !== 'empty_placeholder' && !node.id.startsWith('synaptiq:root:');
+                    const displayName = toPascalCase(node.name);
 
                     let labelHtml = '';
                     if (relLabel && node._depth > 0) {
-                        labelHtml = `<span class="node-label">${node.name}</span><span class="rel-type">${relLabel}</span>`;
+                        labelHtml = `<span class="node-label">${displayName}</span><span class="rel-type">${relLabel}</span>`;
                     } else {
-                        labelHtml = node.name;
+                        labelHtml = displayName;
                     }
 
                     // Add visual drill hint for child nodes
@@ -246,11 +258,62 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
                     }
                 },
                 onComplete: function () {
-                    // Animation complete
+                    // Build adjacent nodes for sidebar
+                    if (onCenterChange && !isPreview) {
+                        const centeredNode = ht.graph.getClosestNodeToOrigin("current");
+                        if (centeredNode) {
+                            const adjacentNodes: NodeInfo[] = [];
+                            centeredNode.eachAdjacency(function (adj: any) {
+                                const child = adj.nodeTo;
+                                const parent = adj.nodeFrom;
+                                if (child && child.name) {
+                                    const childData = child.data || {};
+                                    adjacentNodes.push({
+                                        id: child.id,
+                                        name: child.name,
+                                        relation: childData.relation || childData.relationLabel,
+                                        parentName: parent?.name,  // Track which node this connection came from
+                                        definition: childData.definition,
+                                        source: childData.sourceTitle ? { title: childData.sourceTitle } : undefined,
+                                    });
+                                }
+                            });
+                            const centeredData = centeredNode.data || {};
+                            onCenterChange(
+                                {
+                                    id: centeredNode.id,
+                                    name: centeredNode.name,
+                                    relation: centeredData.relation,
+                                    definition: centeredData.definition,
+                                    source: centeredData.sourceTitle ? { title: centeredData.sourceTitle } : undefined,
+                                },
+                                adjacentNodes
+                            );
+                        }
+                    }
+                },
+                // Enable zoom with mouse wheel
+                Navigation: {
+                    enable: true,
+                    panning: true,  // Enable drag to pan
+                    zooming: 20     // Zoom step size
                 }
             });
 
             htRef.current = ht;
+
+            // Expose navigation function to parent
+            if (onHypertreeReady) {
+                onHypertreeReady((nodeId: string) => {
+                    if (ht && ht.graph.getNode(nodeId)) {
+                        ht.onClick(nodeId, {
+                            onComplete: function () {
+                                ht.controller.onComplete();
+                            }
+                        });
+                    }
+                });
+            }
 
             // Load initial data - backend now returns JIT-compatible tree structure directly
             try {
@@ -260,8 +323,32 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
                 console.log("JIT Tree loaded:", jitTree);
 
                 if (jitTree && jitTree.id && jitTree.children) {
+                    // Replace root node name with user's name if provided
+                    if (userName && jitTree.name === "Knowledge Graph") {
+                        jitTree.name = `${userName}'s Knowledge`;
+                    }
+
                     // Tree is already in JIT format, load directly
                     ht.loadJSON(jitTree);
+
+                    // Apply cross-node adjacencies if present
+                    // This connects siblings/cousins that represent the same concept
+                    if (jitTree.adjacencies && Array.isArray(jitTree.adjacencies)) {
+                        console.log(`Applying ${jitTree.adjacencies.length} cross-node adjacencies`);
+                        for (const adj of jitTree.adjacencies) {
+                            try {
+                                ht.graph.addAdjacence(
+                                    { id: adj.nodeFrom },
+                                    { id: adj.nodeTo },
+                                    adj.data || {}
+                                );
+                            } catch (e) {
+                                // Node might not exist, skip
+                                console.debug(`Skipped adjacency ${adj.nodeFrom} -> ${adj.nodeTo}`);
+                            }
+                        }
+                    }
+
                     ht.refresh();
                     ht.controller.onComplete();
                 } else {
@@ -343,17 +430,7 @@ export function PoincareDisk({ centerNode: initialCenterNode, onNodeClick, class
                 )}
             </div>
 
-            {/* Instructions */}
-            <div className="absolute bottom-4 left-4 z-20 text-white/40 text-xs">
-                <span>Click a concept to explore its relationships</span>
-            </div>
 
-            {/* Legend - positioned bottom right */}
-            {!isPreview && (
-                <div className="absolute bottom-4 right-4 z-20">
-                    <GraphLegend compact />
-                </div>
-            )}
 
             {/* Canvas Container */}
             <div

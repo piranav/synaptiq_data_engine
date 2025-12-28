@@ -30,6 +30,16 @@ export interface GraphNeighborhood {
 }
 
 // JIT Hypertree compatible node structure
+export interface JITAdjacency {
+    nodeFrom: string;
+    nodeTo: string;
+    data?: {
+        $color?: string;
+        $lineWidth?: number;
+        [key: string]: any;
+    };
+}
+
 export interface JITTreeNode {
     id: string;
     name: string;
@@ -40,6 +50,7 @@ export interface JITTreeNode {
         [key: string]: any;
     };
     children: JITTreeNode[];
+    adjacencies?: JITAdjacency[];  // Cross-node connections
 }
 
 export const graphApi = {

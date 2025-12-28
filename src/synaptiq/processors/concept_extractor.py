@@ -32,8 +32,41 @@ logger = structlog.get_logger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STRUCTURED OUTPUT SCHEMAS
+# DOMAIN CLUSTERS FOR RELATIONSHIP INFERENCE
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# When multiple concepts from the same domain appear in a chunk without explicit
+# relationships, we can infer they are "relatedTo" each other
+DOMAIN_CLUSTERS: dict[str, set[str]] = {
+    "physics": {
+        "gravity", "gravitational", "relativity", "spacetime", "mass", "energy",
+        "wave", "particle", "quantum", "field", "force", "momentum", "velocity",
+        "acceleration", "newton", "einstein", "photon", "electron", "proton",
+        "neutron", "quark", "boson", "fermion", "higgs", "string theory",
+        "black hole", "cosmology", "astrophysics", "thermodynamics", "entropy",
+        "electromagnetic", "magnetism", "nuclear", "atomic", "subatomic",
+    },
+    "ai_ml": {
+        "neural", "network", "learning", "training", "model", "inference",
+        "deep", "layer", "weight", "bias", "gradient", "backpropagation",
+        "activation", "optimization", "loss", "accuracy", "transformer",
+        "attention", "embedding", "classifier", "regression", "clustering",
+        "reinforcement", "agent", "reward", "policy", "supervised", "unsupervised",
+        "artificial intelligence", "machine learning", "ai", "ml", "neural network",
+    },
+    "oracle": {
+        "oracle", "database", "sql", "plsql", "cloud", "oci", "exadata",
+        "autonomous", "fusion", "erp", "hcm", "scm", "apex", "ords",
+    },
+    "mathematics": {
+        "algebra", "calculus", "geometry", "topology", "statistics", "probability",
+        "matrix", "vector", "tensor", "derivative", "integral", "function",
+        "equation", "theorem", "proof", "set", "group", "ring", "field",
+    },
+}
+
+
+
 
 class ExtractedRelationship(BaseModel):
     """A relationship between two concepts extracted from text."""
@@ -289,7 +322,7 @@ class ConceptExtractor(BaseProcessor):
                     chunk.metadata["claims"] = result.claims[: self.max_claims_per_chunk]
                     
                     # Store relationships in metadata
-                    chunk.metadata["relationships"] = [
+                    relationships_list = [
                         {
                             "source_concept": r.source_concept,
                             "relation_type": r.relation_type,
@@ -298,6 +331,15 @@ class ConceptExtractor(BaseProcessor):
                         }
                         for r in result.relationships[: self.max_relationships_per_chunk]
                     ]
+                    
+                    # Infer additional relationships from domain co-occurrence
+                    inferred = self._infer_domain_relationships(
+                        chunk.concepts,
+                        relationships_list,
+                    )
+                    relationships_list.extend(inferred)
+                    
+                    chunk.metadata["relationships"] = relationships_list
 
             except Exception as e:
                 logger.error(
@@ -757,6 +799,62 @@ class ConceptExtractor(BaseProcessor):
             )
             for r in raw_relationships
         ]
+    
+    def _infer_domain_relationships(
+        self,
+        concepts: list[str],
+        existing_relationships: list[dict],
+    ) -> list[dict]:
+        """
+        Infer relationships between concepts in the same domain.
+        
+        If concepts like "gravity" and "general relativity" both appear in a chunk,
+        and they're both in the physics domain, infer a "related_to" relationship.
+        
+        Args:
+            concepts: List of extracted concept labels
+            existing_relationships: Already extracted relationships to avoid duplicates
+            
+        Returns:
+            List of inferred relationships to add
+        """
+        inferred = []
+        
+        # Create a set of existing relationships for quick lookup
+        existing_pairs = set()
+        for r in existing_relationships:
+            pair = (r["source_concept"].lower(), r["target_concept"].lower())
+            existing_pairs.add(pair)
+            existing_pairs.add((pair[1], pair[0]))  # Bidirectional check
+        
+        # Find which domain each concept belongs to
+        concept_domains: dict[str, set[str]] = {}
+        for concept in concepts:
+            concept_lower = concept.lower()
+            for domain_name, domain_terms in DOMAIN_CLUSTERS.items():
+                # Check if concept matches or contains any domain term
+                for term in domain_terms:
+                    if term in concept_lower or concept_lower in term:
+                        if concept_lower not in concept_domains:
+                            concept_domains[concept_lower] = set()
+                        concept_domains[concept_lower].add(domain_name)
+                        break
+        
+        # Create relationships between concepts in the same domain
+        concept_list = list(concept_domains.keys())
+        for i, concept1 in enumerate(concept_list):
+            for concept2 in concept_list[i+1:]:
+                # Check if they share a domain
+                shared_domains = concept_domains[concept1] & concept_domains[concept2]
+                if shared_domains and (concept1, concept2) not in existing_pairs:
+                    inferred.append({
+                        "source_concept": concept1,
+                        "relation_type": "related_to",
+                        "target_concept": concept2,
+                        "confidence": 0.6,  # Lower confidence for inferred
+                    })
+        
+        return inferred
 
 
 class ConceptExtractorDisabled(BaseProcessor):

@@ -222,19 +222,44 @@ class GraphManager:
         }
         """
         # Get all concepts with their relationships in one query
+        # Include BOTH outgoing and incoming relationships so concepts appear
+        # under all related parents (bidirectional visibility for interconnection)
+        # Also fetch source information for provenance
         sparql = """
-        SELECT ?concept ?label ?relType ?relatedConcept ?relatedLabel
+        SELECT ?concept ?label ?relType ?relatedConcept ?relatedLabel ?direction ?sourceTitle
         WHERE {
             ?concept a syn:Concept ;
                      syn:label ?label .
             OPTIONAL {
-                ?concept ?relType ?relatedConcept .
-                ?relatedConcept a syn:Concept ;
-                                syn:label ?relatedLabel .
-                FILTER(?relType IN (
-                    syn:isA, syn:partOf, syn:prerequisiteFor, 
-                    syn:relatedTo, syn:oppositeOf, syn:usedIn
-                ))
+                # Get source info for this concept
+                ?concept syn:definedIn ?chunk .
+                ?chunk syn:derivedFrom ?source .
+                ?source syn:sourceTitle ?sourceTitle .
+            }
+            OPTIONAL {
+                {
+                    # Outgoing: this concept relates TO another
+                    ?concept ?relType ?relatedConcept .
+                    ?relatedConcept a syn:Concept ;
+                                    syn:label ?relatedLabel .
+                    BIND("outgoing" AS ?direction)
+                    FILTER(?relType IN (
+                        syn:isA, syn:partOf, syn:prerequisiteFor, 
+                        syn:relatedTo, syn:oppositeOf, syn:usedIn
+                    ))
+                }
+                UNION
+                {
+                    # Incoming: another concept relates TO this concept
+                    ?relatedConcept ?relType ?concept .
+                    ?relatedConcept a syn:Concept ;
+                                    syn:label ?relatedLabel .
+                    BIND("incoming" AS ?direction)
+                    FILTER(?relType IN (
+                        syn:isA, syn:partOf, syn:prerequisiteFor, 
+                        syn:relatedTo, syn:oppositeOf, syn:usedIn
+                    ))
+                }
             }
         }
         ORDER BY ?label
@@ -252,68 +277,177 @@ class GraphManager:
                     continue
                 
                 concept_uri = r.get("concept", "")
+                direction = r.get("direction", "outgoing")
+                source_title = r.get("sourceTitle", "")
                 
                 if label not in concept_map:
                     concept_map[label] = {
                         "uri": concept_uri,
                         "label": label,
-                        "children": {}  # relType -> list of related labels
+                        "sourceTitle": source_title,  # Store source for provenance
+                        "children": {}  # (relType, direction) -> list of related labels
                     }
+                elif source_title and not concept_map[label].get("sourceTitle"):
+                    # Update if we didn't have a source before
+                    concept_map[label]["sourceTitle"] = source_title
                 
                 rel_type = r.get("relType", "").split("#")[-1]
                 related_label = r.get("relatedLabel", "")
                 
                 if rel_type and related_label:
-                    if rel_type not in concept_map[label]["children"]:
-                        concept_map[label]["children"][rel_type] = []
-                    if related_label not in concept_map[label]["children"][rel_type]:
-                        concept_map[label]["children"][rel_type].append(related_label)
+                    # Use a key that includes direction to preserve both relationships
+                    rel_key = (rel_type, direction)
+                    if rel_key not in concept_map[label]["children"]:
+                        concept_map[label]["children"][rel_key] = []
+                    if related_label not in concept_map[label]["children"][rel_key]:
+                        concept_map[label]["children"][rel_key].append(related_label)
             
-            # Relationship type labels
-            REL_LABELS = {
+            # Relationship type labels - outgoing direction
+            REL_LABELS_OUT = {
                 "isA": "is a",
                 "partOf": "part of",
                 "prerequisiteFor": "prerequisite for",
                 "relatedTo": "related to",
                 "oppositeOf": "opposite of",
                 "usedIn": "used in",
-                "contains": "contains",
+            }
+            
+            # Inverse labels for incoming direction (from the perspective of this concept)
+            REL_LABELS_IN = {
+                "isA": "has type",
+                "partOf": "contains",
+                "prerequisiteFor": "requires",
+                "relatedTo": "related to",  # symmetric
+                "oppositeOf": "opposite of",  # symmetric
+                "usedIn": "uses",
             }
             
             # Build JIT tree structure: Root -> Concepts -> Related Concepts
-            jit_children = []
+            # DEDUPLICATION: Don't show a concept as both parent AND child
             
-            for concept_label in sorted(concept_map.keys())[:30]:  # Top 30 concepts
+            # Step 1: Collect all concepts that appear as children
+            child_concepts = set()
+            for concept_label, concept_data in concept_map.items():
+                for rel_key, related_labels in concept_data["children"].items():
+                    for related_label in related_labels:
+                        child_concepts.add(related_label.lower())
+            
+            # Step 2: Score concepts by how many relationships they have
+            concept_scores = {}
+            for concept_label, concept_data in concept_map.items():
+                child_count = sum(len(labels) for labels in concept_data["children"].values())
+                # Bonus for concepts that are NOT children elsewhere (more unique as parents)
+                is_primarily_child = concept_label.lower() in child_concepts and child_count < 2
+                concept_scores[concept_label] = (
+                    0 if is_primarily_child else child_count,  # Deprioritize if primarily a child
+                    child_count,  # Secondary sort by total connections
+                )
+            
+            # Step 3: Sort by score (most connected first) and filter
+            sorted_concepts = sorted(
+                concept_map.keys(),
+                key=lambda c: concept_scores.get(c, (0, 0)),
+                reverse=True
+            )
+            
+            jit_children = []
+            shown_as_parent = set()
+            
+            for concept_label in sorted_concepts[:60]:  # Increased limit
                 concept_data = concept_map[concept_label]
+                
+                # Skip if this concept has no children and appears as a child elsewhere
+                child_count = sum(len(labels) for labels in concept_data["children"].values())
+                if child_count == 0 and concept_label.lower() in child_concepts:
+                    continue  # This concept is only shown as a child of others
                 
                 # Build grandchildren (related concepts)
                 grandchildren = []
-                for rel_type, related_labels in concept_data["children"].items():
-                    for related_label in related_labels[:8]:  # Max 8 per relationship
+                for rel_key, related_labels in concept_data["children"].items():
+                    rel_type, direction = rel_key
+                    
+                    # Select the appropriate label based on direction
+                    if direction == "incoming":
+                        rel_label = REL_LABELS_IN.get(rel_type, rel_type)
+                    else:
+                        rel_label = REL_LABELS_OUT.get(rel_type, rel_type)
+                    
+                    for related_label in related_labels[:10]:
+                        # Look up source for this related concept
+                        related_source = concept_map.get(related_label, {}).get("sourceTitle", "")
                         grandchildren.append({
-                            "id": f"{concept_label}#{rel_type}#{related_label}".replace(" ", "_"),
+                            "id": f"{concept_label}#{direction}#{rel_type}#{related_label}".replace(" ", "_"),
                             "name": related_label,
                             "data": {
-                                "relation": REL_LABELS.get(rel_type, rel_type),
+                                "relation": rel_label,
+                                "sourceTitle": related_source,  # Where this concept came from
                                 "$color": "#0066CC",
                                 "$dim": 10,
                             },
-                            "children": []  # Leaf nodes
+                            "children": []
                         })
                 
-                # Build child (concept)
-                jit_children.append({
-                    "id": f"concept_{concept_label}".replace(" ", "_"),
-                    "name": concept_label,
-                    "data": {
-                        "relation": "contains",
-                        "$color": "#0066CC",
-                        "$dim": 14,
-                    },
-                    "children": grandchildren
-                })
+                # Only add as parent if has children
+                if grandchildren:
+                    jit_children.append({
+                        "id": f"concept_{concept_label}".replace(" ", "_"),
+                        "name": concept_label,
+                        "data": {
+                            "relation": "concept",
+                            "sourceTitle": concept_data.get("sourceTitle", ""),  # Parent's source
+                            "$color": "#0066CC",
+                            "$dim": 14,
+                        },
+                        "children": grandchildren
+                    })
+                    shown_as_parent.add(concept_label.lower())
             
-            # Return JIT-compatible nested tree
+            # Build adjacencies list for cross-node connections
+            # Connect nodes that represent the same concept under different parents
+            adjacencies = []
+            
+            # Build a map: related_label -> list of node IDs that reference it
+            label_to_node_ids: dict[str, list[str]] = {}
+            for child in jit_children:
+                concept_label = child.get("name", "")
+                for grandchild in child.get("children", []):
+                    related_label = grandchild.get("name", "").lower()
+                    node_id = grandchild.get("id", "")
+                    if related_label and node_id:
+                        if related_label not in label_to_node_ids:
+                            label_to_node_ids[related_label] = []
+                        label_to_node_ids[related_label].append(node_id)
+            
+            # For each label that appears multiple times, create adjacencies between its nodes
+            for label, node_ids in label_to_node_ids.items():
+                if len(node_ids) > 1:
+                    # Connect first occurrence to all others
+                    first_id = node_ids[0]
+                    for other_id in node_ids[1:]:
+                        adjacencies.append({
+                            "nodeFrom": first_id,
+                            "nodeTo": other_id,
+                            "data": {"$color": "#88CC00", "$lineWidth": 1}
+                        })
+            
+            # Also connect concepts that have explicit relationships with each other
+            # (parent-level concepts that are related)
+            for i, child1 in enumerate(jit_children):
+                name1 = child1.get("name", "").lower()
+                for grandchild in child1.get("children", []):
+                    related_name = grandchild.get("name", "").lower()
+                    # Check if related_name is also a parent concept
+                    for child2 in jit_children:
+                        name2 = child2.get("name", "").lower()
+                        if name2 == related_name and name1 != name2:
+                            # Create adjacency from parent1 to parent2
+                            adjacencies.append({
+                                "nodeFrom": child1.get("id", ""),
+                                "nodeTo": child2.get("id", ""),
+                                "data": {"$color": "#00AAFF", "$lineWidth": 2}
+                            })
+            
+            # Return JIT-compatible nested tree WITH adjacencies
             return {
                 "id": f"synaptiq:root:{user_id}",
                 "name": "Knowledge Graph",
@@ -322,7 +456,8 @@ class GraphManager:
                     "$color": "#1A1A1A",
                     "$dim": 28,
                 },
-                "children": jit_children
+                "children": jit_children,
+                "adjacencies": adjacencies  # NEW: cross-node connections
             }
             
         except Exception as e:

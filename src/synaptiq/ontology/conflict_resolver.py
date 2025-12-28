@@ -31,6 +31,88 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMMON ABBREVIATIONS AND SYNONYMS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Maps abbreviations/short forms to their full forms and vice versa
+# Used to find similar concepts even when labeled differently
+COMMON_SYNONYMS: dict[str, list[str]] = {
+    # AI / Machine Learning
+    "ai": ["artificial intelligence", "machine intelligence"],
+    "artificial intelligence": ["ai", "machine intelligence"],
+    "ml": ["machine learning"],
+    "machine learning": ["ml"],
+    "dl": ["deep learning"],
+    "deep learning": ["dl"],
+    "nlp": ["natural language processing"],
+    "natural language processing": ["nlp"],
+    "cv": ["computer vision"],
+    "computer vision": ["cv"],
+    "nn": ["neural network", "neural net", "neural networks"],
+    "neural network": ["nn", "neural net", "neural networks"],
+    "neural networks": ["nn", "neural net", "neural network"],
+    "rnn": ["recurrent neural network", "recurrent neural networks"],
+    "recurrent neural network": ["rnn"],
+    "cnn": ["convolutional neural network", "convnet", "convolutional neural networks"],
+    "convolutional neural network": ["cnn", "convnet"],
+    "llm": ["large language model", "large language models"],
+    "large language model": ["llm"],
+    "gpt": ["generative pre-trained transformer"],
+    "rl": ["reinforcement learning"],
+    "reinforcement learning": ["rl"],
+    
+    # Physics
+    "gr": ["general relativity"],
+    "general relativity": ["gr", "einstein's theory of relativity", "relativity"],
+    "qm": ["quantum mechanics"],
+    "quantum mechanics": ["qm", "quantum theory", "quantum physics"],
+    "qft": ["quantum field theory"],
+    "quantum field theory": ["qft"],
+    "em": ["electromagnetism", "electromagnetic"],
+    "electromagnetism": ["em"],
+    "sr": ["special relativity"],
+    "special relativity": ["sr"],
+    
+    # Math
+    "pde": ["partial differential equation", "partial differential equations"],
+    "ode": ["ordinary differential equation", "ordinary differential equations"],
+    "lin alg": ["linear algebra"],
+    "linear algebra": ["lin alg"],
+    
+    # Computing
+    "api": ["application programming interface"],
+    "sql": ["structured query language"],
+    "db": ["database"],
+    "os": ["operating system"],
+    "gpu": ["graphics processing unit"],
+    "cpu": ["central processing unit"],
+}
+
+# Domain clusters for inferring relationships between co-occurring concepts
+DOMAIN_CLUSTERS: dict[str, set[str]] = {
+    "physics": {
+        "gravity", "gravitational", "relativity", "spacetime", "mass", "energy",
+        "wave", "particle", "quantum", "field", "force", "momentum", "velocity",
+        "acceleration", "newton", "einstein", "photon", "electron", "proton",
+        "neutron", "quark", "boson", "fermion", "higgs", "string theory",
+        "black hole", "cosmology", "astrophysics", "thermodynamics", "entropy",
+    },
+    "ai_ml": {
+        "neural", "network", "learning", "training", "model", "inference",
+        "deep", "layer", "weight", "bias", "gradient", "backpropagation",
+        "activation", "optimization", "loss", "accuracy", "transformer",
+        "attention", "embedding", "classifier", "regression", "clustering",
+        "reinforcement", "agent", "reward", "policy", "supervised", "unsupervised",
+    },
+    "mathematics": {
+        "algebra", "calculus", "geometry", "topology", "statistics", "probability",
+        "matrix", "vector", "tensor", "derivative", "integral", "function",
+        "equation", "theorem", "proof", "set", "group", "ring", "field",
+    },
+}
+
+
 class ConflictAction(str, Enum):
     """Possible actions for concept conflict resolution."""
     
@@ -245,6 +327,9 @@ class ConflictResolver:
         """
         Find concepts that might be similar to the new concept.
         
+        Now includes abbreviation/synonym expansion to catch cases like
+        "AI" matching "artificial intelligence".
+        
         Args:
             user_id: User identifier
             new_concept: The new concept to compare
@@ -252,69 +337,89 @@ class ConflictResolver:
         Returns:
             List of potentially similar existing concepts
         """
-        # Search by label fragments
-        label_parts = new_concept.label.lower().split()
         similar_concepts = []
         seen_uris = set()
         
-        for part in label_parts:
-            if len(part) < 3:
-                continue
-            
-            results = await self.fuseki.find_similar_concepts(
-                user_id,
-                part,
-                limit=5,
-            )
-            
-            for r in results:
-                uri = r.get("concept")
-                if uri and uri not in seen_uris:
-                    seen_uris.add(uri)
-                    
-                    # Get full concept details
-                    details = await self.fuseki.get_concept_with_definition(
-                        user_id,
-                        uri,
-                    )
-                    
-                    if details:
-                        similar_concepts.append(
-                            ExistingConcept(
-                                uri=uri,
-                                label=details.get("label", ""),
-                                definition_text=details.get("definitionText"),
-                                source_context=details.get("sourceTitle"),
-                            )
-                        )
+        # Build list of search terms: original label + synonyms + label parts
+        search_terms = set()
+        label_lower = new_concept.label.lower().strip()
         
-        # Also search alt labels
+        # Add the full label itself
+        search_terms.add(label_lower)
+        
+        # Add label parts (words)
+        for part in label_lower.split():
+            if len(part) >= 2:  # Reduced from 3 to catch "ai", "ml"
+                search_terms.add(part)
+        
+        # Expand using synonym dictionary
+        if label_lower in COMMON_SYNONYMS:
+            for synonym in COMMON_SYNONYMS[label_lower]:
+                search_terms.add(synonym.lower())
+                # Also add synonym parts
+                for part in synonym.lower().split():
+                    if len(part) >= 2:
+                        search_terms.add(part)
+        
+        # Also check if any part of the label has synonyms
+        for part in label_lower.split():
+            part_lower = part.lower()
+            if part_lower in COMMON_SYNONYMS:
+                for synonym in COMMON_SYNONYMS[part_lower]:
+                    search_terms.add(synonym.lower())
+        
+        # Add alt labels and their synonyms
         for alt_label in new_concept.alt_labels:
-            if len(alt_label) < 3:
+            alt_lower = alt_label.lower().strip()
+            search_terms.add(alt_lower)
+            if alt_lower in COMMON_SYNONYMS:
+                for synonym in COMMON_SYNONYMS[alt_lower]:
+                    search_terms.add(synonym.lower())
+        
+        logger.debug(
+            "Searching for similar concepts",
+            original_label=new_concept.label,
+            search_terms=list(search_terms)[:10],  # Log first 10
+        )
+        
+        # Search for each term
+        for term in search_terms:
+            if len(term) < 2:
                 continue
             
-            results = await self.fuseki.find_similar_concepts(
-                user_id,
-                alt_label,
-                limit=3,
-            )
-            
-            for r in results:
-                uri = r.get("concept")
-                if uri and uri not in seen_uris:
-                    seen_uris.add(uri)
-                    details = await self.fuseki.get_concept_with_definition(
-                        user_id,
-                        uri,
-                    )
-                    if details:
-                        similar_concepts.append(
-                            ExistingConcept(
-                                uri=uri,
-                                label=details.get("label", ""),
-                                definition_text=details.get("definitionText"),
-                            )
+            try:
+                results = await self.fuseki.find_similar_concepts(
+                    user_id,
+                    term,
+                    limit=5,
+                )
+                
+                for r in results:
+                    uri = r.get("concept")
+                    if uri and uri not in seen_uris:
+                        seen_uris.add(uri)
+                        
+                        # Get full concept details
+                        details = await self.fuseki.get_concept_with_definition(
+                            user_id,
+                            uri,
                         )
+                        
+                        if details:
+                            similar_concepts.append(
+                                ExistingConcept(
+                                    uri=uri,
+                                    label=details.get("label", ""),
+                                    definition_text=details.get("definitionText"),
+                                    source_context=details.get("sourceTitle"),
+                                )
+                            )
+            except Exception as e:
+                logger.warning(
+                    "Error searching for similar concept",
+                    term=term,
+                    error=str(e),
+                )
         
         return similar_concepts[:10]  # Limit to 10 candidates
 
