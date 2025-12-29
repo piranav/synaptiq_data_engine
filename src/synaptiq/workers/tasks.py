@@ -939,3 +939,125 @@ async def _initialize_fuseki_async() -> dict:
         
     finally:
         await fuseki.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KNOWLEDGE EXTRACTION TASKS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@shared_task(
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+)
+def extract_knowledge_task(
+    self,
+    note_id: str,
+    user_id: str,
+) -> dict:
+    """
+    Run multimodal knowledge extraction on a note.
+    
+    Processes:
+    - Text blocks → Semantic chunks → Concepts → Embeddings
+    - Tables → Structured JSON + Description + Row Facts → Embeddings
+    - Images → Vision analysis → Description → Embeddings
+    - Code blocks → Explanation → Embeddings
+    - Mermaid diagrams → Component extraction → Embeddings
+    
+    Results are stored in:
+    - PostgreSQL (artifacts)
+    - Qdrant (embeddings)
+    - Fuseki (knowledge graph)
+    
+    Args:
+        note_id: Note ID to extract from
+        user_id: User ID for isolation
+        
+    Returns:
+        Result dict with extraction summary
+    """
+    return run_async(_extract_knowledge_async(self, note_id, user_id))
+
+
+async def _extract_knowledge_async(
+    task,
+    note_id: str,
+    user_id: str,
+) -> dict:
+    """Async implementation of knowledge extraction task."""
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+    from sqlalchemy.orm import sessionmaker
+    from config.settings import get_settings
+    from synaptiq.services.knowledge_extraction import KnowledgeExtractionService
+    
+    settings = get_settings()
+    
+    # Create database session
+    engine = create_async_engine(settings.postgres_url)
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    
+    qdrant = QdrantStore()
+    fuseki = FusekiStore()
+    
+    try:
+        logger.info(
+            "Starting knowledge extraction task",
+            note_id=note_id,
+            user_id=user_id,
+        )
+        
+        # Ensure storage is ready
+        await qdrant.ensure_collection()
+        
+        # Ensure user graph exists
+        if not await fuseki.user_graph_exists(user_id):
+            await fuseki.create_user_graph(user_id)
+            logger.info("Created user graph", user_id=user_id)
+        
+        async with async_session() as session:
+            service = KnowledgeExtractionService(
+                session=session,
+                qdrant=qdrant,
+                fuseki=fuseki,
+            )
+            
+            result = await service.extract_knowledge(note_id, user_id)
+            await session.commit()
+        
+        logger.info(
+            "Knowledge extraction completed",
+            note_id=note_id,
+            user_id=user_id,
+            artifacts=result.get("artifacts", 0),
+            concepts=len(result.get("concepts", [])),
+        )
+        
+        return {
+            "status": "completed",
+            **result,
+        }
+        
+    except ValueError as e:
+        logger.error("Note not found", note_id=note_id, error=str(e))
+        return {
+            "status": "failed",
+            "note_id": note_id,
+            "error": str(e),
+        }
+        
+    except Exception as e:
+        logger.error("Knowledge extraction failed", note_id=note_id, error=str(e))
+        return {
+            "status": "failed",
+            "note_id": note_id,
+            "error": str(e),
+        }
+        
+    finally:
+        await qdrant.close()
+        await fuseki.close()
+        await engine.dispose()

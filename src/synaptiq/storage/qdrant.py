@@ -102,6 +102,11 @@ class QdrantStore:
             ("document_id", models.PayloadSchemaType.KEYWORD),
             ("has_definition", models.PayloadSchemaType.BOOL),
             ("concepts", models.PayloadSchemaType.KEYWORD),
+            # Multimodal artifact indexes
+            ("content_type", models.PayloadSchemaType.KEYWORD),
+            ("artifact_type", models.PayloadSchemaType.KEYWORD),
+            ("source_note_id", models.PayloadSchemaType.KEYWORD),
+            ("parent_artifact_id", models.PayloadSchemaType.KEYWORD),
         ]
 
         for field_name, schema_type in indexes:
@@ -384,7 +389,292 @@ class QdrantStore:
             logger.error("Failed to get collection info", error=str(e))
             return {"error": str(e)}
 
+    # =========================================================================
+    # ARTIFACT METHODS
+    # =========================================================================
+
+    async def upsert_artifact(
+        self,
+        artifact_id: str,
+        vector: list[float],
+        user_id: str,
+        artifact_type: str,
+        source_note_id: str,
+        description: str,
+        text: str,
+        concepts: list[str],
+        metadata: Optional[dict] = None,
+    ) -> None:
+        """
+        Upsert an artifact embedding.
+        
+        Args:
+            artifact_id: Unique artifact identifier
+            vector: Embedding vector
+            user_id: User ID for filtering
+            artifact_type: Type (table, image, code, mermaid)
+            source_note_id: Source note ID
+            description: Artifact description
+            text: Combined text used for embedding
+            concepts: Extracted concepts
+            metadata: Additional metadata
+        """
+        try:
+            payload = {
+                "user_id": user_id,
+                "content_type": f"artifact_{artifact_type}",
+                "artifact_type": artifact_type,
+                "source_note_id": source_note_id,
+                "description": description,
+                "text": text[:2000],  # Truncate for payload size
+                "concepts": concepts,
+            }
+            if metadata:
+                payload.update(metadata)
+            
+            point = models.PointStruct(
+                id=artifact_id,
+                vector=vector,
+                payload=payload,
+            )
+            
+            await self.client.upsert(
+                collection_name=self.collection_name,
+                points=[point],
+            )
+            
+            logger.debug("Upserted artifact", artifact_id=artifact_id, type=artifact_type)
+            
+        except Exception as e:
+            logger.error("Failed to upsert artifact", artifact_id=artifact_id, error=str(e))
+            raise StorageError(
+                message=f"Failed to upsert artifact: {str(e)}",
+                store_type="qdrant",
+                operation="upsert_artifact",
+                cause=e,
+            )
+
+    async def upsert_table_row_facts(
+        self,
+        parent_artifact_id: str,
+        facts: list[str],
+        embeddings: list[list[float]],
+        user_id: str,
+        source_note_id: str,
+    ) -> int:
+        """
+        Upsert row-level facts for a table.
+        
+        Args:
+            parent_artifact_id: Parent table artifact ID
+            facts: List of fact strings
+            embeddings: Corresponding embeddings
+            user_id: User ID for filtering
+            source_note_id: Source note ID
+            
+        Returns:
+            Number of facts upserted
+        """
+        if not facts or not embeddings or len(facts) != len(embeddings):
+            return 0
+        
+        try:
+            import uuid
+            
+            points = []
+            for i, (fact, embedding) in enumerate(zip(facts, embeddings)):
+                # Generate a deterministic UUID based on parent ID and row index
+                # This ensures consistent IDs for the same row facts
+                namespace = uuid.UUID(parent_artifact_id)
+                point_id = str(uuid.uuid5(namespace, f"row_{i}"))
+                points.append(
+                    models.PointStruct(
+                        id=point_id,
+                        vector=embedding,
+                        payload={
+                            "user_id": user_id,
+                            "content_type": "table_fact",
+                            "artifact_type": "table_fact",
+                            "parent_artifact_id": parent_artifact_id,
+                            "source_note_id": source_note_id,
+                            "row_index": i,
+                            "fact": fact,
+                            "text": fact,
+                        },
+                    )
+                )
+            
+            await self.client.upsert(
+                collection_name=self.collection_name,
+                points=points,
+            )
+            
+            logger.debug(
+                "Upserted table row facts",
+                parent_id=parent_artifact_id,
+                count=len(points),
+            )
+            return len(points)
+            
+        except Exception as e:
+            logger.error("Failed to upsert row facts", error=str(e))
+            raise StorageError(
+                message=f"Failed to upsert row facts: {str(e)}",
+                store_type="qdrant",
+                operation="upsert_row_facts",
+                cause=e,
+            )
+
+    async def search_artifacts(
+        self,
+        query_vector: list[float],
+        user_id: str,
+        limit: int = 10,
+        artifact_types: Optional[list[str]] = None,
+        source_note_id: Optional[str] = None,
+        include_row_facts: bool = True,
+        score_threshold: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """
+        Search for similar artifacts.
+        
+        Args:
+            query_vector: Query embedding
+            user_id: User ID for filtering
+            limit: Max results
+            artifact_types: Filter by artifact types
+            source_note_id: Filter by source note
+            include_row_facts: Include table row facts
+            score_threshold: Minimum similarity
+            
+        Returns:
+            List of matching artifacts
+        """
+        # Build filter
+        must_conditions = [
+            models.FieldCondition(
+                key="user_id",
+                match=models.MatchValue(value=user_id),
+            )
+        ]
+        
+        # Filter by content type
+        content_types = []
+        if artifact_types:
+            content_types.extend([f"artifact_{t}" for t in artifact_types])
+            if include_row_facts and "table" in artifact_types:
+                content_types.append("table_fact")
+        else:
+            # All artifact types
+            content_types = ["artifact_table", "artifact_image", "artifact_code", "artifact_mermaid"]
+            if include_row_facts:
+                content_types.append("table_fact")
+        
+        must_conditions.append(
+            models.FieldCondition(
+                key="content_type",
+                match=models.MatchAny(any=content_types),
+            )
+        )
+        
+        if source_note_id:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="source_note_id",
+                    match=models.MatchValue(value=source_note_id),
+                )
+            )
+        
+        query_filter = models.Filter(must=must_conditions)
+        
+        try:
+            results = await self.client.query_points(
+                collection_name=self.collection_name,
+                query=query_vector,
+                query_filter=query_filter,
+                limit=limit,
+                score_threshold=score_threshold,
+                with_payload=True,
+            )
+            
+            points = results.points if hasattr(results, "points") else results
+            
+            return [
+                {
+                    "id": str(hit.id),
+                    "score": hit.score,
+                    "payload": hit.payload,
+                }
+                for hit in points
+            ]
+            
+        except Exception as e:
+            logger.error("Artifact search failed", error=str(e))
+            raise StorageError(
+                message=f"Artifact search failed: {str(e)}",
+                store_type="qdrant",
+                operation="search_artifacts",
+                cause=e,
+            )
+
+    async def delete_by_note(self, note_id: str, user_id: str) -> int:
+        """
+        Delete all artifacts and chunks for a note.
+        
+        Args:
+            note_id: Note ID
+            user_id: User ID for safety check
+            
+        Returns:
+            Number of points deleted
+        """
+        try:
+            count_result = await self.client.count(
+                collection_name=self.collection_name,
+                count_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="source_note_id",
+                            match=models.MatchValue(value=note_id),
+                        ),
+                        models.FieldCondition(
+                            key="user_id",
+                            match=models.MatchValue(value=user_id),
+                        ),
+                    ]
+                ),
+            )
+            
+            await self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="source_note_id",
+                                match=models.MatchValue(value=note_id),
+                            ),
+                            models.FieldCondition(
+                                key="user_id",
+                                match=models.MatchValue(value=user_id),
+                            ),
+                        ]
+                    )
+                ),
+            )
+            
+            logger.info("Deleted note artifacts", note_id=note_id, count=count_result.count)
+            return count_result.count
+            
+        except Exception as e:
+            logger.error("Delete note artifacts failed", note_id=note_id, error=str(e))
+            raise StorageError(
+                message=f"Delete failed: {str(e)}",
+                store_type="qdrant",
+                operation="delete_by_note",
+                cause=e,
+            )
+
     async def close(self) -> None:
         """Close the client connection."""
         await self.client.close()
-

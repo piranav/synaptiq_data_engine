@@ -68,6 +68,22 @@ export interface ImageUploadResult {
     original_filename: string;
 }
 
+export interface KnowledgeExtractionResult {
+    note_id: string;
+    text_chunks: number;
+    artifacts: number;
+    concepts: string[];
+    processing_time_ms: number;
+    breakdown: Record<string, number>;
+}
+
+export interface KnowledgeExtractionDispatch {
+    status: "dispatched";
+    task_id: string;
+    note_id: string;
+    message: string;
+}
+
 // =============================================================================
 // NOTES SERVICE
 // =============================================================================
@@ -196,6 +212,21 @@ class NotesService {
     async extractConcepts(noteId: string): Promise<string[]> {
         const { data } = await api.post<{ concepts: string[] }>(`/notes/${noteId}/extract-concepts`);
         return data.concepts;
+    }
+
+    /**
+     * Extract knowledge from a note (triggers full multimodal ingestion pipeline)
+     * @param noteId - The note ID to extract knowledge from
+     * @param background - If true, dispatches to Celery worker (recommended for production)
+     */
+    async extractKnowledge(
+        noteId: string,
+        background: boolean = true
+    ): Promise<KnowledgeExtractionResult | KnowledgeExtractionDispatch> {
+        const { data } = await api.post(
+            `/notes/${noteId}/extract-knowledge?background=${background}`
+        );
+        return data;
     }
 
     // =========================================================================

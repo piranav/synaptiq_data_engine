@@ -21,6 +21,7 @@ export default function NotesPage() {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
     const [showRightPanel, setShowRightPanel] = useState(true);
     const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+    const [isExtracting, setIsExtracting] = useState(false);
 
     // Refs for debounced save
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -226,11 +227,28 @@ export default function NotesPage() {
         router.push(`/graph?concept=${encodeURIComponent(concept)}`);
     };
 
-    const handleAddAsInsight = () => {
-        // Placeholder for ETL integration
-        console.log("Add as insight:", activeNote);
-        // TODO: Integrate with ETL process
-        alert("Note prepared for insight extraction. (ETL integration pending)");
+    const handleAddAsInsight = async () => {
+        if (!activeNoteId || !activeNote) return;
+
+        try {
+            setIsExtracting(true);
+            const result = await notesService.extractKnowledge(activeNoteId, true);
+
+            if ('task_id' in result) {
+                // Background task dispatched
+                console.log("Knowledge extraction dispatched:", result);
+                alert(`✓ Knowledge extraction started. Task ID: ${result.task_id.slice(0, 8)}...`);
+            } else {
+                // Synchronous result
+                console.log("Knowledge extraction completed:", result);
+                alert(`✓ Extracted ${result.text_chunks} chunks and ${result.concepts.length} concepts.`);
+            }
+        } catch (error) {
+            console.error("Knowledge extraction failed:", error);
+            alert(`✗ Failed to extract knowledge: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setIsExtracting(false);
+        }
     };
 
     // Extract headings for outline
@@ -345,6 +363,7 @@ export default function NotesPage() {
                     headings={extractHeadings(activeNote.content)}
                     onConceptClick={handleConceptClick}
                     onAddAsInsight={handleAddAsInsight}
+                    isExtractingConcepts={isExtracting}
                 />
             )}
         </div>

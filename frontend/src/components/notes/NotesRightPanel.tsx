@@ -37,10 +37,23 @@ export function NotesRightPanel({
                 {onAddAsInsight && (
                     <button
                         onClick={onAddAsInsight}
-                        className="w-full h-9 rounded-md border border-accent/30 bg-accent/10 text-accent hover:bg-accent/20 text-[13px] font-medium flex items-center justify-center gap-2 transition-colors"
+                        disabled={isExtractingConcepts}
+                        className={`w-full h-9 rounded-md border border-accent/30 bg-accent/10 text-accent text-[13px] font-medium flex items-center justify-center gap-2 transition-colors ${isExtractingConcepts
+                                ? 'opacity-70 cursor-not-allowed'
+                                : 'hover:bg-accent/20'
+                            }`}
                     >
-                        <Sparkles className="h-4 w-4" />
-                        Add as Insight
+                        {isExtractingConcepts ? (
+                            <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Extracting...
+                            </>
+                        ) : (
+                            <>
+                                <Sparkles className="h-4 w-4" />
+                                Add as Insight
+                            </>
+                        )}
                     </button>
                 )}
 

@@ -639,14 +639,168 @@ async def delete_note(
 
 
 # =============================================================================
-# CONCEPT EXTRACTION
+# KNOWLEDGE EXTRACTION
 # =============================================================================
+
+
+class KnowledgeExtractionResponse(BaseModel):
+    """Response for knowledge extraction."""
+    
+    note_id: str
+    text_chunks: int
+    artifacts: int
+    concepts: list[str]
+    processing_time_ms: int
+    breakdown: dict
+
+
+class ArtifactResponse(BaseModel):
+    """Response for artifact information."""
+    
+    id: str
+    type: str
+    position: int
+    description: Optional[str]
+    status: str
+    created_at: Optional[str]
+
+
+async def get_knowledge_service(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get KnowledgeExtractionService instance."""
+    from synaptiq.services.knowledge_extraction import KnowledgeExtractionService
+    return KnowledgeExtractionService(session)
+
+
+@router.post(
+    "/{note_id}/extract-knowledge",
+    summary="Extract knowledge from note (multimodal)",
+)
+async def extract_knowledge(
+    note_id: str,
+    background: bool = Query(False, description="Run extraction in background"),
+    user: User = Depends(get_current_user),
+    knowledge_service = Depends(get_knowledge_service),
+):
+    """
+    Run full multimodal knowledge extraction on a note.
+    
+    Processes:
+    - Text blocks → Semantic chunks → Concepts → Embeddings
+    - Tables → Structured JSON + Description + Row Facts → Embeddings
+    - Images → Vision analysis → Description → Embeddings
+    - Code blocks → Explanation → Embeddings
+    - Mermaid diagrams → Component extraction → Embeddings
+    
+    Results are stored in:
+    - PostgreSQL (artifacts)
+    - Qdrant (embeddings)
+    - Fuseki (knowledge graph)
+    
+    Set background=true to dispatch to a Celery worker and return immediately.
+    """
+    if background:
+        # Dispatch to Celery worker
+        try:
+            from synaptiq.workers.tasks import extract_knowledge_task
+            
+            task = extract_knowledge_task.delay(note_id, user.id)
+            
+            logger.info(
+                "Knowledge extraction dispatched",
+                note_id=note_id,
+                task_id=task.id,
+            )
+            
+            return {
+                "status": "dispatched",
+                "task_id": task.id,
+                "note_id": note_id,
+                "message": "Knowledge extraction is running in the background",
+            }
+        except Exception as e:
+            logger.error("Failed to dispatch task", note_id=note_id, error=str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to dispatch task: {str(e)}",
+            )
+    
+    # Synchronous extraction
+    try:
+        result = await knowledge_service.extract_knowledge(note_id, user.id)
+        return KnowledgeExtractionResponse(**result)
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error("Knowledge extraction failed", note_id=note_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Knowledge extraction failed: {str(e)}",
+        )
+
+
+@router.get(
+    "/{note_id}/artifacts",
+    response_model=list[ArtifactResponse],
+    summary="Get extracted artifacts",
+)
+async def get_note_artifacts(
+    note_id: str,
+    user: User = Depends(get_current_user),
+    knowledge_service = Depends(get_knowledge_service),
+) -> list[ArtifactResponse]:
+    """
+    Get all extracted artifacts for a note.
+    
+    Returns tables, images, code blocks, and mermaid diagrams
+    that have been processed.
+    """
+    try:
+        artifacts = await knowledge_service.get_note_artifacts(note_id, user.id)
+        return [ArtifactResponse(**a) for a in artifacts]
+        
+    except Exception as e:
+        logger.error("Failed to get artifacts", note_id=note_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get artifacts: {str(e)}",
+        )
+
+
+@router.delete(
+    "/{note_id}/artifacts",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete extracted artifacts",
+)
+async def delete_note_artifacts(
+    note_id: str,
+    user: User = Depends(get_current_user),
+    knowledge_service = Depends(get_knowledge_service),
+) -> None:
+    """
+    Delete all extracted artifacts for a note.
+    
+    Removes from PostgreSQL, Qdrant, and Fuseki.
+    """
+    try:
+        await knowledge_service.delete_note_artifacts(note_id, user.id)
+    except Exception as e:
+        logger.error("Failed to delete artifacts", note_id=note_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete artifacts: {str(e)}",
+        )
 
 
 @router.post(
     "/{note_id}/extract",
     response_model=list[str],
-    summary="Extract concepts from note",
+    summary="Extract concepts from note (legacy)",
 )
 async def extract_concepts(
     note_id: str,
@@ -654,10 +808,9 @@ async def extract_concepts(
     notes_service: NotesService = Depends(get_notes_service),
 ) -> list[str]:
     """
-    Extract and link concepts from note content.
+    Extract [[concept]] links from note content.
     
-    Finds [[concept]] links and optionally uses AI to identify
-    additional concepts.
+    For full multimodal extraction, use POST /{note_id}/extract-knowledge instead.
     """
     try:
         concepts = await notes_service.extract_concepts(note_id, user.id)
