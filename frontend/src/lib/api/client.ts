@@ -64,7 +64,23 @@ class ApiClient {
 
             // If the API returns a structured error, throw it
             if (!response.ok) {
-                throw new Error(data?.message || data?.detail || `Request failed with status ${response.status}`);
+                // Extract error message from various possible error formats
+                let errorMessage = `Request failed with status ${response.status}`;
+
+                if (data) {
+                    // Check common error message properties
+                    const msg = data.message || data.detail || data.error;
+                    if (typeof msg === 'string') {
+                        errorMessage = msg;
+                    } else if (msg && typeof msg === 'object') {
+                        // Handle nested error objects
+                        errorMessage = JSON.stringify(msg);
+                    } else if (typeof data === 'string') {
+                        errorMessage = data;
+                    }
+                }
+
+                throw new Error(errorMessage);
             }
 
             return { data, status: response.status, ok: response.ok };

@@ -420,10 +420,20 @@ export function NoteEditor({
                     margin-bottom: 0.75rem;
                 }
                 
-                .note-editor .ProseMirror ul,
+                .note-editor .ProseMirror ul:not([data-type="taskList"]) {
+                    padding-left: 1.5rem;
+                    margin-bottom: 0.75rem;
+                    list-style-type: disc;
+                }
+                
                 .note-editor .ProseMirror ol {
                     padding-left: 1.5rem;
                     margin-bottom: 0.75rem;
+                    list-style-type: decimal;
+                }
+                
+                .note-editor .ProseMirror li {
+                    display: list-item;
                 }
                 
                 .note-editor .ProseMirror blockquote {
