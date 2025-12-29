@@ -6,19 +6,22 @@ Provides endpoints for:
 - Folder management
 - Note search and filtering
 - Concept extraction
+- Image uploads for notes
 """
 
 from typing import Any, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config.settings import get_settings
 from synaptiq.api.middleware.auth import get_current_user
 from synaptiq.domain.models import User
 from synaptiq.infrastructure.database import get_async_session
 from synaptiq.services.notes_service import NotesService
+from synaptiq.storage.s3 import S3Store
 
 logger = structlog.get_logger(__name__)
 
@@ -688,3 +691,141 @@ async def get_linked_concepts(
     
     return note.linked_concepts or []
 
+
+# =============================================================================
+# IMAGE ENDPOINTS
+# =============================================================================
+
+
+class ImageUploadResponse(BaseModel):
+    """Response for image upload."""
+    
+    url: str
+    key: str
+    size_bytes: int
+    original_filename: str
+
+
+@router.post(
+    "/images",
+    response_model=ImageUploadResponse,
+    summary="Upload image for notes",
+)
+async def upload_note_image(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+) -> ImageUploadResponse:
+    """
+    Upload an image for use in notes.
+    
+    Returns a presigned URL for displaying the image.
+    Supported formats: JPEG, PNG, GIF, WebP.
+    """
+    settings = get_settings()
+    
+    # Validate file type
+    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type: {file.content_type}. Allowed: {', '.join(allowed_types)}",
+        )
+    
+    # Validate file size (max 10MB)
+    max_size = 10 * 1024 * 1024
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File too large. Maximum size: 10MB",
+        )
+    
+    if not settings.s3_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="S3 storage is not configured",
+        )
+    
+    try:
+        s3_store = S3Store()
+        await s3_store.ensure_bucket()
+        
+        # Upload to S3 with notes images prefix
+        result = await s3_store.upload_file(
+            file_content=content,
+            filename=f"notes/{file.filename}",
+            user_id=user.id,
+            content_type=file.content_type,
+        )
+        
+        # Generate presigned URL for display
+        presigned_url = await s3_store.generate_presigned_url(
+            result["s3_key"],
+            expiration=7 * 24 * 3600,  # 7 days
+        )
+        
+        logger.info(
+            "Note image uploaded",
+            user_id=user.id,
+            key=result["s3_key"],
+            size=result["size_bytes"],
+        )
+        
+        return ImageUploadResponse(
+            url=presigned_url,
+            key=result["s3_key"],
+            size_bytes=result["size_bytes"],
+            original_filename=file.filename or "image",
+        )
+        
+    except Exception as e:
+        logger.error("Image upload failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image: {str(e)}",
+        )
+
+
+@router.get(
+    "/images/{image_key:path}",
+    summary="Get image URL",
+)
+async def get_image_url(
+    image_key: str,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """
+    Get a presigned URL for an image.
+    
+    Use this to refresh expired URLs.
+    """
+    settings = get_settings()
+    
+    if not settings.s3_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="S3 storage is not configured",
+        )
+    
+    # Verify the image belongs to the user
+    if not image_key.startswith(f"uploads/{user.id}/"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this image",
+        )
+    
+    try:
+        s3_store = S3Store()
+        presigned_url = await s3_store.generate_presigned_url(
+            image_key,
+            expiration=7 * 24 * 3600,  # 7 days
+        )
+        
+        return {"url": presigned_url}
+        
+    except Exception as e:
+        logger.error("Failed to generate image URL", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate URL: {str(e)}",
+        )
