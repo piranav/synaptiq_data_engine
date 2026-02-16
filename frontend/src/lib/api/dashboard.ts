@@ -88,9 +88,25 @@ export class DashboardService {
                 status: "completed",
             }));
 
-            // Map jobs to activity items
+            // Collect normalized source URLs so we can deduplicate against jobs
+            const sourceUrls = new Set(sourcesData.sources.map((s: any) => this.normalizeUrl(s.source_url)));
+
+            // Filter out stale jobs (stuck in processing for over 1 hour)
+            const ONE_HOUR_MS = 60 * 60 * 1000;
+            const now = Date.now();
+
+            // Map jobs to activity items, excluding completed, already-ingested, or stale jobs
             const jobItems: ActivityItem[] = jobsData.jobs
-                .filter((j: any) => j.status !== "completed")
+                .filter((j: any) => {
+                    if (j.status === "completed") return false;
+                    if (sourceUrls.has(this.normalizeUrl(j.source_url))) return false;
+                    // Exclude stale processing jobs (stuck for over 1 hour)
+                    if (j.status === "processing") {
+                        const jobAge = now - new Date(j.created_at).getTime();
+                        if (jobAge > ONE_HOUR_MS) return false;
+                    }
+                    return true;
+                })
                 .map((j: any) => ({
                     id: j.id,
                     type: j.source_type || "unknown",
@@ -141,9 +157,25 @@ export class DashboardService {
                 status: "completed" as const,
             }));
 
-            // Map jobs to activity items
+            // Collect normalized source URLs so we can deduplicate against jobs
+            const sourceUrls = new Set((data.recent_sources || []).map((s: any) => this.normalizeUrl(s.url)));
+
+            // Filter out stale jobs (stuck in processing for over 1 hour)
+            const ONE_HOUR_MS = 60 * 60 * 1000;
+            const now = Date.now();
+
+            // Map jobs to activity items, excluding completed, already-ingested, or stale jobs
             const jobItems: ActivityItem[] = (data.active_jobs || [])
-                .filter((j: any) => j.status !== "completed")
+                .filter((j: any) => {
+                    if (j.status === "completed") return false;
+                    if (sourceUrls.has(this.normalizeUrl(j.source_url))) return false;
+                    // Exclude stale processing jobs (stuck for over 1 hour)
+                    if (j.status === "processing") {
+                        const jobAge = now - new Date(j.created_at).getTime();
+                        if (jobAge > ONE_HOUR_MS) return false;
+                    }
+                    return true;
+                })
                 .map((j: any) => ({
                     id: j.id,
                     type: j.source_type || "unknown",
@@ -184,6 +216,12 @@ export class DashboardService {
             // silent fail for polling
             return [];
         }
+    }
+
+    private normalizeUrl(url: string): string {
+        const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([\w-]+)/i);
+        if (ytMatch) return `https://www.youtube.com/watch?v=${ytMatch[1]}`;
+        return url;
     }
 
     private formatSourceUrl(url: string): string {

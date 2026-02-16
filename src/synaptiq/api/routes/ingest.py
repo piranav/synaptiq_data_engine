@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
 from config.settings import get_settings
-from synaptiq.adapters.base import AdapterFactory
+from synaptiq.adapters.base import AdapterFactory, normalize_url
 from synaptiq.api.dependencies import get_mongodb
 from synaptiq.api.middleware.auth import get_current_user
 from synaptiq.core.schemas import Job, JobStatus, SourceType
@@ -128,8 +128,11 @@ async def ingest_url(
             detail=f"Unsupported URL type. Supported: YouTube videos, web articles",
         )
 
+    # Normalize URL to canonical form so Job and Source always match
+    canonical_url = normalize_url(request.url)
+
     # Check if already ingested
-    existing_id = await mongodb.source_exists(request.url, user.id)
+    existing_id = await mongodb.source_exists(canonical_url, user.id)
     if existing_id:
         return IngestResponse(
             job_id="",
@@ -141,7 +144,7 @@ async def ingest_url(
     # Create job
     job = Job(
         user_id=user.id,
-        source_url=request.url,
+        source_url=canonical_url,
         source_type=source_type,
         status=JobStatus.PENDING,
     )
@@ -150,7 +153,7 @@ async def ingest_url(
     # Queue the ingestion task
     ingest_url_task.delay(
         job_id=job.id,
-        url=request.url,
+        url=canonical_url,
         user_id=user.id,
         source_type=source_type.value,
     )
@@ -181,7 +184,7 @@ async def ingest_url_sync(
     Prefer async mode for production use.
     Requires JWT authentication.
     """
-    from synaptiq.adapters.base import AdapterFactory
+    from synaptiq.adapters.base import AdapterFactory, normalize_url
     from synaptiq.processors.pipeline import create_default_pipeline
 
     # Detect source type
@@ -192,8 +195,11 @@ async def ingest_url_sync(
             detail="Unsupported URL type",
         )
 
+    # Normalize URL to canonical form
+    canonical_url = normalize_url(request.url)
+
     # Check if already ingested
-    existing_id = await mongodb.source_exists(request.url, user.id)
+    existing_id = await mongodb.source_exists(canonical_url, user.id)
     if existing_id:
         doc = await mongodb.get_source(existing_id)
         if doc:
@@ -206,8 +212,8 @@ async def ingest_url_sync(
 
     try:
         # Get adapter and ingest
-        adapter = AdapterFactory.get_adapter(request.url)
-        document = await adapter.ingest(request.url, user.id)
+        adapter = AdapterFactory.get_adapter(canonical_url)
+        document = await adapter.ingest(canonical_url, user.id)
 
         # Save to MongoDB
         await mongodb.save_source(document)

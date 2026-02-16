@@ -153,3 +153,11 @@ def extract_youtube_video_id(url: str) -> Optional[str]:
     return None
 
 
+def normalize_url(url: str) -> str:
+    """Normalize URL to canonical form for consistent storage and dedup."""
+    video_id = extract_youtube_video_id(url)
+    if video_id:
+        return f"https://www.youtube.com/watch?v={video_id}"
+    return url
+
+

@@ -8,7 +8,7 @@ from typing import Optional
 import structlog
 from celery import shared_task
 
-from synaptiq.adapters.base import AdapterFactory
+from synaptiq.adapters.base import AdapterFactory, normalize_url
 from synaptiq.core.exceptions import AdapterError, ProcessingError, StorageError
 from synaptiq.core.schemas import Job, JobStatus, SourceType
 from synaptiq.processors.pipeline import create_default_pipeline, create_pipeline_without_ontology
@@ -222,6 +222,9 @@ async def _ingest_url_async(
     enable_ontology: bool = True,
 ) -> dict:
     """Async implementation of ingestion task."""
+    # Normalize URL to canonical form (handles old jobs with non-canonical URLs)
+    url = normalize_url(url)
+
     mongo = MongoDBStore()
     qdrant = QdrantStore()
     fuseki: Optional[FusekiStore] = None
@@ -290,9 +293,6 @@ async def _ingest_url_async(
         logger.info("Ingesting content", adapter=adapter.__class__.__name__)
         document = await adapter.ingest(url, user_id)
 
-        # Save source document to MongoDB
-        await mongo.save_source(document)
-
         # Run processing pipeline
         logger.info(
             "Running processing pipeline",
@@ -309,6 +309,9 @@ async def _ingest_url_async(
 
         # Store chunks in Qdrant
         chunk_count = await qdrant.upsert_chunks(processed_chunks)
+
+        # Save source document to MongoDB only after all processing is complete
+        await mongo.save_source(document)
 
         # Update job as completed
         await mongo.update_job(

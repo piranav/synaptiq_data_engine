@@ -178,6 +178,21 @@ class QueryAgent:
             graph_results = await self._query_graph(query, context, intent)
             
             if graph_results:
+                # GRAPH_FIRST: also query vector to supplement with actual content
+                if strategy == RetrievalStrategy.GRAPH_FIRST:
+                    fallback_chain.append("vector")
+                    vector_results = await self._query_vector(query, context)
+                    
+                    return {
+                        "source": "graph_and_vector" if vector_results else "graph",
+                        "results": {
+                            "graph": graph_results,
+                            "vector": vector_results or [],
+                        } if vector_results else graph_results,
+                        "fallback_chain": fallback_chain,
+                    }
+                
+                # GRAPH_ONLY: return graph results only
                 return {
                     "source": "graph",
                     "results": graph_results,
@@ -426,6 +441,26 @@ class QueryAgent:
                     "type": "graph",
                     "text": details.get("definitionText", "")[:200] if details.get("definitionText") else "",
                 })
+        elif source == "graph_and_vector":
+            graph = results.get("graph", [])
+            vector = results.get("vector", [])
+            for r in graph:
+                details = r.get("details", {})
+                sources.append({
+                    "title": details.get("sourceTitle", "") or r.get("entity", ""),
+                    "url": details.get("sourceUrl", ""),
+                    "type": "graph",
+                    "text": details.get("definitionText", "")[:200] if details.get("definitionText") else "",
+                })
+            for r in vector:
+                payload = r.get("payload", {})
+                sources.append({
+                    "title": payload.get("source_title", ""),
+                    "url": payload.get("source_url", ""),
+                    "type": payload.get("source_type", ""),
+                    "text": payload.get("text", "")[:200],
+                    "timestamp": payload.get("timestamp_start_ms"),
+                })
         elif source == "hybrid":
             vector = results.get("vector", [])
             graph = results.get("graph", [])
@@ -523,6 +558,34 @@ class QueryAgent:
                 if payload.get("source_url"):
                     parts.append(f"URL: {payload['source_url']}")
         
+        elif source == "graph_and_vector":
+            parts.append("\n## Knowledge Graph Results")
+            graph = results.get("graph", [])
+            vector = results.get("vector", [])
+            
+            for r in graph:
+                parts.append(f"\n### Concept: {r.get('entity', 'Unknown')}")
+                details = r.get("details", {})
+                if details:
+                    if details.get("definitionText"):
+                        parts.append(f"Definition: {details['definitionText']}")
+                    if details.get("sourceTitle"):
+                        parts.append(f"Source: {details['sourceTitle']}")
+                relationships = r.get("relationships", [])
+                if relationships:
+                    parts.append("Relationships:")
+                    for rel in relationships[:5]:
+                        parts.append(f"  - {rel.get('relationType', '?')} → {rel.get('relatedLabel', '?')}")
+            
+            if vector:
+                parts.append("\n## Related Content from Notes")
+                for i, r in enumerate(vector, 1):
+                    payload = r.get("payload", {})
+                    parts.append(f"\n### Excerpt {i} (score: {r.get('score', 0):.2f})")
+                    parts.append(f"Text: {payload.get('text', '')[:500]}...")
+                    if payload.get("source_title"):
+                        parts.append(f"Source: {payload['source_title']}")
+        
         elif source == "hybrid":
             parts.append("\n## Combined Results")
             graph = results.get("graph", [])
@@ -602,10 +665,19 @@ class QueryAgent:
                 strategy, query, context, intent
             )
             
+            retrieval_source = retrieval_results.get("source")
+            raw_results = retrieval_results.get("results", [])
+            if isinstance(raw_results, dict):
+                result_count = sum(
+                    len(v) for v in raw_results.values() if isinstance(v, list)
+                )
+            else:
+                result_count = len(raw_results)
+            
             logger.info(
                 "Retrieval complete",
-                source=retrieval_results.get("source"),
-                result_count=len(retrieval_results.get("results", [])),
+                source=retrieval_source,
+                result_count=result_count,
             )
             
             # Step 4: Synthesize response with session for history
