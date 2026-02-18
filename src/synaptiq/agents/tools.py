@@ -11,6 +11,7 @@ from agents import function_tool, RunContextWrapper
 
 from .context import AgentContext
 from .schemas import VectorSearchResult, GraphSearchResult, SparqlQueryResult
+from synaptiq.ontology.namespaces import expand_synonyms
 
 logger = structlog.get_logger(__name__)
 
@@ -157,11 +158,27 @@ async def get_concept_details(
     )
     
     try:
-        # First find the concept URI
-        concept_uri = await agent_ctx.fuseki_store.concept_exists(
-            agent_ctx.user_id,
-            concept_label,
-        )
+        # Try the original term and all its synonyms
+        concept_uri = None
+        search_terms = expand_synonyms(concept_label)
+        
+        for term in search_terms:
+            concept_uri = await agent_ctx.fuseki_store.concept_exists(
+                agent_ctx.user_id,
+                term,
+            )
+            if concept_uri:
+                break
+        
+        if not concept_uri:
+            # Fallback to fuzzy search
+            for term in search_terms:
+                similar = await agent_ctx.fuseki_store.find_similar_concepts(
+                    agent_ctx.user_id, term, limit=3
+                )
+                if similar:
+                    concept_uri = similar[0].get("concept")
+                    break
         
         if not concept_uri:
             logger.info("Concept not found", concept_label=concept_label)
@@ -332,6 +349,7 @@ async def find_similar_concepts(
 ) -> list[dict[str, Any]]:
     """
     Find concepts with similar labels in the knowledge graph.
+    Automatically expands abbreviations and synonyms (e.g. "CNN" -> "convolutional neural network").
     
     Args:
         label: Label to search for (partial match)
@@ -343,14 +361,28 @@ async def find_similar_concepts(
     agent_ctx = ctx.context
     
     try:
-        results = await agent_ctx.fuseki_store.find_similar_concepts(
-            user_id=agent_ctx.user_id,
-            label=label,
-            limit=limit,
-        )
+        # Expand synonyms and search for all variants
+        search_terms = expand_synonyms(label)
+        all_results = []
+        seen_uris = set()
         
-        return results
+        for term in search_terms:
+            results = await agent_ctx.fuseki_store.find_similar_concepts(
+                user_id=agent_ctx.user_id,
+                label=term,
+                limit=limit,
+            )
+            for r in results:
+                uri = r.get("concept")
+                if uri and uri not in seen_uris:
+                    seen_uris.add(uri)
+                    all_results.append(r)
+        
+        logger.info("Find similar concepts complete", label=label, count=len(all_results))
+        return all_results[:limit]
         
     except Exception as e:
         logger.error("Find similar concepts failed", error=str(e))
         return []
+
+

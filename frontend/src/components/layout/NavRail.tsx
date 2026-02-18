@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import {
     LayoutGrid,
@@ -9,7 +10,6 @@ import {
     Library,
     MessageSquare,
     Settings,
-    LogOut,
     Loader2
 } from "lucide-react";
 import clsx from "clsx";
@@ -31,6 +31,12 @@ export function NavRail() {
     const router = useRouter();
     const { user } = useAuth();
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isMounted, setIsMounted] = useState(false);
+
+    // Ensure we're on the client before rendering avatar to prevent hydration mismatch
+    useEffect(() => {
+        setIsMounted(true);
+    }, []);
 
     // Poll for sync status
     useEffect(() => {
@@ -48,9 +54,12 @@ export function NavRail() {
         return () => clearInterval(interval);
     }, []);
 
-    const initials = user?.name
-        ? user.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()
-        : "PK";
+    // Derive initials only after mount to avoid server/client mismatch (user comes from localStorage on client)
+    const initials = !isMounted
+        ? "…"
+        : user?.name
+            ? user.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()
+            : "?";
 
     const handleLogout = async () => {
         try {
@@ -62,19 +71,14 @@ export function NavRail() {
     };
 
     return (
-        <nav className="group flex flex-col h-screen relative glass-sidebar border-r border-white/10 z-50 transition-all duration-300 w-16 hover:w-64 overflow-hidden flex-shrink-0 py-6">
-            {/* Logo Area */}
-            <div className="mb-8 w-full flex justify-center group-hover:justify-start group-hover:px-6 transition-all duration-300">
-                <div className="w-8 h-8 bg-accent text-white flex items-center justify-center rounded-lg text-sm font-semibold tracking-tight shrink-0">
+        <nav className="w-[88px] border-r border-border bg-[var(--glass-sidebar)] backdrop-blur-sm flex h-full flex-col items-center py-5 px-3 shrink-0">
+            <div className="mb-8 w-full flex justify-center">
+                <div className="w-10 h-10 bg-primary text-surface rounded-full flex items-center justify-center text-sm font-semibold tracking-tight">
                     S
                 </div>
-                <span className="hidden group-hover:block ml-3 font-semibold text-white self-center tracking-tight whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-100">
-                    Synaptiq
-                </span>
             </div>
 
-            {/* Main Nav */}
-            <div className="flex-1 w-full flex flex-col gap-2 px-3">
+            <div className="flex-1 w-full flex flex-col items-center gap-2">
                 {navItems.map((item) => {
                     const isActive = pathname.startsWith(item.href);
                     const Icon = item.icon;
@@ -83,68 +87,70 @@ export function NavRail() {
                         <Link
                             key={item.href}
                             href={item.href}
+                            title={item.label}
+                            aria-label={item.label}
                             className={clsx(
-                                "flex items-center h-10 px-3 rounded-lg transition-colors duration-200 border border-transparent",
+                                "relative w-11 h-11 rounded-full border inline-flex items-center justify-center transition-all duration-200",
                                 isActive
-                                    ? "bg-white/[0.08] text-white border-white/10"
-                                    : "text-white/70 hover:bg-white/[0.06] hover:text-white hover:border-white/10",
-                                !isActive && "group-hover:justify-start justify-center"
+                                    ? "bg-[var(--active-bg)] text-accent border-accent/35 shadow-card"
+                                    : "bg-surface text-secondary border-border hover:text-primary hover:bg-[var(--hover-bg)]"
                             )}
                         >
-                            <div className={clsx("flex items-center justify-center", !isActive && "w-full group-hover:w-auto")}>
-                                <Icon className="w-5 h-5 shrink-0" strokeWidth={1.5} />
-                            </div>
-                            <span className="hidden group-hover:block ml-3 text-sm font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-100">
-                                {item.label}
-                            </span>
+                            <Icon className="w-[18px] h-[18px]" strokeWidth={1.9} />
+                            {isActive && (
+                                <span className="absolute -right-1.5 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-accent" />
+                            )}
                         </Link>
                     );
                 })}
             </div>
 
-            {/* Bottom Actions */}
-            <div className="w-full px-3 pb-2 mt-auto">
+            <div className="w-full mt-auto flex flex-col items-center gap-2">
                 <Link
                     href="/settings"
+                    title="Settings"
+                    aria-label="Settings"
                     className={clsx(
-                        "flex items-center h-10 px-3 rounded-lg transition-colors duration-200 mb-2 border border-transparent",
+                        "relative w-11 h-11 rounded-full border inline-flex items-center justify-center transition-all duration-200",
                         pathname.startsWith("/settings")
-                            ? "bg-white/[0.08] text-white border-white/10"
-                            : "text-white/70 hover:bg-white/[0.06] hover:text-white hover:border-white/10",
-                        "justify-center group-hover:justify-start"
+                            ? "bg-[var(--active-bg)] text-accent border-accent/35 shadow-card"
+                            : "bg-surface text-secondary border-border hover:text-primary hover:bg-[var(--hover-bg)]"
                     )}
                 >
-                    <div className={clsx("flex items-center justify-center", "w-full group-hover:w-auto")}>
-                        <Settings className="w-5 h-5 shrink-0" strokeWidth={1.5} />
-                    </div>
-                    <span className="hidden group-hover:block ml-3 text-sm font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-100">
-                        Settings
-                    </span>
+                    <Settings className="w-[18px] h-[18px]" strokeWidth={1.85} />
                 </Link>
 
-                {/* User Profile */}
-                <div className="mt-4 flex items-center justify-center group-hover:justify-start group-hover:px-3 cursor-pointer hover:bg-white/[0.06] rounded-lg p-2 transition-colors relative border border-transparent hover:border-white/10" onClick={handleLogout} title="Click to log out">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-white/20 to-white/5 border border-white/10 flex items-center justify-center text-white text-[11px] font-bold shrink-0">
-                        {initials}
-                    </div>
-                    <div className="hidden group-hover:flex flex-col ml-3 overflow-hidden opacity-0 group-hover:opacity-100 transition-opacity duration-300 delay-100">
-                        <span className="text-xs font-medium text-white truncate">{user?.name || "User"}</span>
-                        <div className="flex items-center gap-1">
-                            {isSyncing ? (
-                                <>
-                                    <Loader2 className="w-3 h-3 animate-spin text-accent" />
-                                    <span className="text-[10px] text-white/60 truncate">Syncing...</span>
-                                </>
-                            ) : (
-                                <span className="text-[10px] text-white/60 truncate">Online</span>
-                            )}
+                <button
+                    type="button"
+                    onClick={handleLogout}
+                    title="Log out"
+                    aria-label="Log out"
+                    className="mt-2 w-11 h-11 rounded-full border border-border bg-surface hover:bg-[var(--hover-bg)] transition-colors relative inline-flex items-center justify-center"
+                >
+                    {isMounted && user?.avatar_url ? (
+                        <Image
+                            src={user.avatar_url}
+                            alt={`${user?.name || "User"} avatar`}
+                            className="w-8 h-8 rounded-full border border-border object-cover"
+                            width={32}
+                            height={32}
+                            unoptimized
+                            referrerPolicy="no-referrer"
+                        />
+                    ) : (
+                        <div className="w-8 h-8 rounded-full bg-[var(--elevated)] border border-border flex items-center justify-center text-primary text-[11px] font-semibold">
+                            {initials}
                         </div>
-                    </div>
-                    {/* Logout Hint on Hover (only when expanded) */}
-                    <div className="hidden group-hover:flex absolute right-2 text-white/60 opacity-0 hover:opacity-100 transition-opacity">
-                        <LogOut className="w-4 h-4" />
-                    </div>
-                </div>
+                    )}
+                    {isSyncing ? (
+                        <span className="absolute -right-0.5 -top-0.5 h-4 w-4 rounded-full border border-border bg-surface text-accent inline-flex items-center justify-center">
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                        </span>
+                    ) : (
+                        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-success border border-surface" />
+                    )}
+                </button>
+                <span className="sr-only">{isSyncing ? "Syncing" : "Online"}</span>
             </div>
         </nav>
     );

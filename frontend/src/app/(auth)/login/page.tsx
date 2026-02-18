@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { SocialAuthButtons } from "@/components/auth/SocialAuthButtons";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { authService } from "@/lib/api/auth";
@@ -11,6 +13,7 @@ export default function LoginPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
+    const router = useRouter();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -18,13 +21,11 @@ export default function LoginPage() {
         setError(null);
 
         try {
-            const response = await authService.login({ email, password });
-            console.log("Logged in:", response);
-            // In a real app, Store tokens in context/storage
-            // For now just redirect
-            window.location.href = "/home";
-        } catch (err: any) {
-            setError(err.message || "Invalid email or password");
+            await authService.login({ email, password });
+            router.replace("/home");
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Invalid email or password";
+            setError(message);
         } finally {
             setIsLoading(false);
         }
@@ -81,7 +82,7 @@ export default function LoginPage() {
                     type="submit"
                     size="lg"
                     isLoading={isLoading}
-                    className="w-full mt-2"
+                    className="mt-2 w-full bg-gradient-to-r from-accent to-[#4f8cff] shadow-[0_10px_28px_rgba(37,107,238,0.35)] hover:from-[#2a74ff] hover:to-[#6ca1ff]"
                 >
                     Sign In
                 </Button>
@@ -93,17 +94,14 @@ export default function LoginPage() {
                 <div className="h-px flex-1 bg-border-subtle" />
             </div>
 
-            <div className="mt-6 grid grid-cols-2 gap-4">
-                <Button variant="secondary" onClick={() => console.log("Google auth")}>
-                    Google
-                </Button>
-                <Button variant="secondary" onClick={() => console.log("Github auth")}>
-                    GitHub
-                </Button>
-            </div>
+            <SocialAuthButtons
+                mode="login"
+                onSuccess={() => router.replace("/home")}
+                onError={setError}
+            />
 
             <p className="mt-8 text-center text-callout text-secondary">
-                Don't have an account?{" "}
+                Don&apos;t have an account?{" "}
                 <Link href="/signup" className="text-accent hover:underline font-medium">
                     Sign up
                 </Link>

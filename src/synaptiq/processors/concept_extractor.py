@@ -132,34 +132,37 @@ EXTRACTION_SYSTEM_PROMPT = """You are a knowledge extraction assistant for build
 
 For each text chunk, extract:
 
-1. **Concepts**: Key topics, entities, technical terms, and important nouns/noun phrases. Focus on:
-   - Technical terms and jargon
-   - Named entities (people, organizations, technologies)
-   - Abstract concepts being discussed
-   - Domain-specific vocabulary
+1. **Concepts** (max 6 per chunk): Key topics and entities at the granularity of textbook chapter titles or glossary entries — not individual terms or overly broad fields.
+   - GOOD granularity: "convolutional neural network", "gradient descent", "Fourier transform"
+   - TOO BROAD: "machine learning", "physics", "mathematics"
+   - TOO NARROW: "step size", "weight value", "pixel"
+   Focus on:
+   - Technical terms and named methods/algorithms
+   - Named entities (people, organizations, specific technologies)
+   - Domain-specific concepts that would appear in a textbook index
+   - Prefer multi-word compound terms over single generic words
 
 2. **Definitions**: Determine if the text contains a definition. Look for patterns like:
-   - "X is Y"
-   - "X refers to Y"
-   - "X means Y"
-   - "X is defined as Y"
+   - "X is Y" / "X refers to Y" / "X means Y" / "X is defined as Y"
    - Explicit explanations of what something is
-   If a definition is found, extract the actual definition text.
+   If a definition is found, extract the COMPLETE definition text.
 
-3. **Claims**: Key assertions, facts, or statements being made. Focus on:
-   - Factual statements
-   - Assertions that could be verified
-   - Important takeaways
+3. **Claims**: Key assertions, facts, or statements being made (max 3).
 
-4. **Relationships**: Identify relationships between concepts. Look for:
-   - Taxonomic: "X is a type of Y", "X is a Y" → is_a
+4. **Relationships** (max 3 per chunk): Identify ONLY the strongest, most explicit relationships between concepts.
+   IMPORTANT: Prefer specific relationship types over generic ones. Use this priority order:
+   - Taxonomic: "X is a type of Y", "X is a Y" → is_a (HIGHEST priority)
    - Compositional: "X is part of Y", "X contains Y" → part_of
    - Prerequisites: "X requires Y", "understanding X needs Y" → prerequisite_for
    - Usage: "X is used in Y", "X applies to Y" → used_in
-   - Association: "X is related to Y", "X and Y are connected" → related_to
    - Opposition: "X is the opposite of Y", "unlike X, Y" → opposite_of
+   - Association: → related_to (LAST RESORT — only if NO other type applies)
 
-Be precise and extract only genuinely relevant items. Limit to the most important concepts and relationships.
+   Rules for relationships:
+   - Only extract relationships that are EXPLICITLY stated or strongly implied in the text
+   - Do NOT create relationships just because two concepts co-occur in the same chunk
+   - Do NOT use related_to as a catch-all — if you cannot identify a specific relationship type, skip the relationship entirely
+   - Each relationship must have a confidence >= 0.8 to be worth extracting
 
 Respond in JSON format with this structure:
 {
@@ -180,36 +183,38 @@ BATCH_EXTRACTION_PROMPT = """Analyze the following text chunks and extract conce
 
 Respond with a JSON object containing a "results" array with one result object per chunk, in the same order as the input.
 Each result should have:
-- concepts (array of strings)
+- concepts (array of strings, max 6) — textbook-index-level terms, not single generic words
 - has_definition (boolean)
 - defined_concept (string or null)
 - definition_text (string or null - the actual definition if has_definition is true)
-- claims (array of strings)
-- relationships (array of objects with source_concept, relation_type, target_concept, confidence)
+- claims (array of strings, max 3)
+- relationships (array of objects, max 3) — ONLY explicit relationships with confidence >= 0.8
+  - Prefer is_a, part_of, prerequisite_for, used_in, opposite_of over related_to
+  - Do NOT use related_to just because two concepts co-occur
 
-Valid relation_type values: is_a, part_of, prerequisite_for, related_to, used_in, opposite_of
+Valid relation_type values (in priority order): is_a, part_of, prerequisite_for, used_in, opposite_of, related_to
 
 Example response format:
 {{"results": [
     {{
-        "concepts": ["tensor", "matrix", "array"],
+        "concepts": ["tensor", "matrix", "multi-dimensional array"],
         "has_definition": true,
         "defined_concept": "tensor",
         "definition_text": "A tensor is a multi-dimensional array that generalizes scalars, vectors, and matrices.",
         "claims": ["Tensors generalize matrices to higher dimensions"],
         "relationships": [
-            {{"source_concept": "tensor", "relation_type": "is_a", "target_concept": "array", "confidence": 0.95}},
-            {{"source_concept": "matrix", "relation_type": "prerequisite_for", "target_concept": "tensor", "confidence": 0.8}}
+            {{"source_concept": "tensor", "relation_type": "is_a", "target_concept": "multi-dimensional array", "confidence": 0.95}},
+            {{"source_concept": "matrix", "relation_type": "prerequisite_for", "target_concept": "tensor", "confidence": 0.85}}
         ]
     }},
     {{
-        "concepts": ["neural network", "deep learning"],
+        "concepts": ["convolutional neural network", "deep learning"],
         "has_definition": false,
         "defined_concept": null,
         "definition_text": null,
         "claims": [],
         "relationships": [
-            {{"source_concept": "neural network", "relation_type": "part_of", "target_concept": "deep learning", "confidence": 0.85}}
+            {{"source_concept": "convolutional neural network", "relation_type": "is_a", "target_concept": "deep learning", "confidence": 0.9}}
         ]
     }}
 ]}}"""
@@ -241,7 +246,7 @@ class ConceptExtractor(BaseProcessor):
         extract_relationships: bool = True,
         max_concepts_per_chunk: int = 10,
         max_claims_per_chunk: int = 5,
-        max_relationships_per_chunk: int = 10,
+        max_relationships_per_chunk: int = 5,
         batch_size: int = 5,
         use_heuristics: bool = True,
     ):
@@ -332,12 +337,11 @@ class ConceptExtractor(BaseProcessor):
                         for r in result.relationships[: self.max_relationships_per_chunk]
                     ]
                     
-                    # Infer additional relationships from domain co-occurrence
-                    inferred = self._infer_domain_relationships(
-                        chunk.concepts,
-                        relationships_list,
-                    )
-                    relationships_list.extend(inferred)
+                    # NOTE: Domain-inferred relatedTo relationships removed.
+                    # They generated O(n^2) weak links per chunk and created
+                    # noise in both the graph and visualization. Relationships
+                    # are now only created from explicit LLM extraction or
+                    # heuristic patterns.
                     
                     chunk.metadata["relationships"] = relationships_list
 

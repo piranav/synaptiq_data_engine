@@ -60,17 +60,17 @@ export function ConversationList({
     // Collapsed state - just show toggle button
     if (isCollapsed) {
         return (
-            <aside className="w-14 h-full border-r border-white/10 bg-black/20 flex flex-col items-center py-3 shrink-0">
+            <aside className="w-14 h-full border-r border-border bg-surface/50 flex flex-col items-center py-3 shrink-0">
                 <button
                     onClick={onToggleCollapse}
-                    className="h-8 w-8 rounded-md flex items-center justify-center border border-white/10 hover:bg-white/[0.06] text-white/70 hover:text-white transition-colors"
+                    className="h-8 w-8 rounded-md flex items-center justify-center border border-border hover:bg-[var(--hover-bg)] text-secondary hover:text-primary transition-colors"
                     title="Expand sidebar"
                 >
                     <PanelLeft className="w-4 h-4" strokeWidth={1.5} />
                 </button>
                 <button
                     onClick={onNew}
-                    className="mt-2 h-8 w-8 rounded-md flex items-center justify-center bg-[#256BEE] hover:bg-[#1F5BCC] text-white transition-colors"
+                    className="mt-2 h-8 w-8 rounded-md flex items-center justify-center bg-accent hover:bg-accent-hover text-white transition-colors"
                     title="New chat"
                 >
                     <Plus className="w-4 h-4" strokeWidth={1.5} />
@@ -80,20 +80,20 @@ export function ConversationList({
     }
 
     return (
-        <aside className="w-[280px] h-full border-r border-white/10 bg-black/20 flex flex-col shrink-0">
+        <aside className="w-[280px] h-full border-r border-border bg-surface/50 flex flex-col shrink-0">
             {/* Header */}
-            <div className="p-3 border-b border-white/10">
+            <div className="p-3 border-b border-border">
                 <div className="flex items-center gap-2">
                     <button
                         onClick={onToggleCollapse}
-                        className="h-8 w-8 rounded-md flex items-center justify-center border border-white/10 hover:bg-white/[0.06] text-white/70 hover:text-white transition-colors shrink-0"
+                        className="h-8 w-8 rounded-md flex items-center justify-center border border-border hover:bg-[var(--hover-bg)] text-secondary hover:text-primary transition-colors shrink-0"
                         title="Collapse sidebar"
                     >
                         <PanelLeftClose className="w-4 h-4" strokeWidth={1.5} />
                     </button>
                     <button
                         onClick={onNew}
-                        className="flex-1 h-8 flex items-center justify-center gap-2 bg-[#256BEE] hover:bg-[#1F5BCC] rounded-md text-[13px] leading-[18px] font-medium text-white transition-colors border border-white/10"
+                        className="flex-1 h-8 flex items-center justify-center gap-2 bg-accent hover:bg-accent-hover rounded-md text-[13px] leading-[18px] font-medium text-white transition-colors border border-border"
                     >
                         <Plus className="w-4 h-4" strokeWidth={1.5} />
                         New chat
@@ -104,13 +104,13 @@ export function ConversationList({
             {/* Search */}
             <div className="px-3 py-3">
                 <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50" strokeWidth={1.5} />
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary" strokeWidth={1.5} />
                     <input
                         type="text"
                         placeholder="Search conversations..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full h-8 pl-8 pr-2 rounded-md bg-white/[0.03] border border-white/10 text-[12px] leading-[16px] text-white/80 placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#256BEE]/50 transition-colors"
+                        className="w-full h-8 pl-8 pr-2 rounded-md bg-surface border border-border text-[12px] leading-[16px] text-primary/90 placeholder:text-secondary focus:outline-none focus:ring-2 focus:ring-accent/35 transition-colors"
                     />
                 </div>
             </div>
@@ -119,12 +119,12 @@ export function ConversationList({
             <div className="flex-1 overflow-y-auto no-scrollbar">
                 {isLoading ? (
                     <div className="flex items-center justify-center h-32">
-                        <Loader2 className="w-5 h-5 animate-spin text-white/60" />
+                        <Loader2 className="w-5 h-5 animate-spin text-secondary" />
                     </div>
                 ) : filteredConversations.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-32 px-4 text-center">
-                        <MessageSquare className="w-8 h-8 text-white/40 mb-2" strokeWidth={1.5} />
-                        <p className="text-[13px] leading-[18px] text-white/60">
+                        <MessageSquare className="w-8 h-8 text-secondary mb-2" strokeWidth={1.5} />
+                        <p className="text-[13px] leading-[18px] text-secondary">
                             {searchQuery ? "No matching conversations" : "No conversations yet"}
                         </p>
                     </div>
@@ -137,8 +137,8 @@ export function ConversationList({
                                 className={clsx(
                                     "group relative mx-2 mb-1 px-3 py-2.5 rounded-md cursor-pointer transition-colors border border-transparent",
                                     activeId === conversation.id
-                                        ? "bg-white/[0.06] border-white/10"
-                                        : "hover:bg-white/[0.04] hover:border-white/10"
+                                        ? "bg-elevated border-border"
+                                        : "hover:bg-[var(--hover-bg)] hover:border-border"
                                 )}
                             >
                                 <div className="flex items-start justify-between gap-2">
@@ -147,21 +147,21 @@ export function ConversationList({
                                             className={clsx(
                                                 "text-[13px] leading-[18px] font-medium truncate",
                                                 activeId === conversation.id
-                                                    ? "text-white"
-                                                    : "text-white/80"
+                                                    ? "text-primary"
+                                                    : "text-primary/85"
                                             )}
                                         >
                                             {conversation.title || "New conversation"}
                                         </h3>
                                         {conversation.preview && (
-                                            <p className="text-[12px] leading-[16px] text-white/50 truncate mt-0.5">
+                                            <p className="text-[12px] leading-[16px] text-secondary truncate mt-0.5">
                                                 {conversation.preview}
                                             </p>
                                         )}
                                     </div>
                                     {/* Time / Delete button container */}
                                     <div className="relative shrink-0 flex items-center">
-                                        <span className="text-[11px] leading-[16px] text-white/40 group-hover:opacity-0 transition-opacity">
+                                        <span className="text-[11px] leading-[16px] text-secondary group-hover:opacity-0 transition-opacity">
                                             {formatTime(conversation.updated_at)}
                                         </span>
                                         {/* Delete button - appears on hover */}
@@ -170,7 +170,7 @@ export function ConversationList({
                                                 e.stopPropagation();
                                                 onDelete(conversation.id);
                                             }}
-                                            className="absolute inset-0 flex items-center justify-center p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-rose-500/20 text-white/60 hover:text-rose-400 transition-all"
+                                            className="absolute inset-0 flex items-center justify-center p-1.5 rounded-md opacity-0 group-hover:opacity-100 hover:bg-rose-500/20 text-secondary hover:text-rose-400 transition-all"
                                         >
                                             <Trash2 className="w-3.5 h-3.5" strokeWidth={1.5} />
                                         </button>

@@ -1,15 +1,24 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"] });
+import { AuthProvider } from "@/contexts/AuthContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 
 export const metadata: Metadata = {
   title: "Synaptiq",
   description: "Personal Knowledge System",
 };
-
-import { AuthProvider } from "@/contexts/AuthContext";
+const themeBootstrapScript = `
+(() => {
+  try {
+    const mode = localStorage.getItem("synaptiq_theme_mode") || "system";
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const resolved = mode === "system" ? (prefersDark ? "dark" : "light") : mode;
+    document.documentElement.setAttribute("data-theme", resolved);
+  } catch {
+    document.documentElement.setAttribute("data-theme", "dark");
+  }
+})();
+`;
 
 export default function RootLayout({
   children,
@@ -17,11 +26,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={inter.className} suppressHydrationWarning={true}>
-        <AuthProvider>
-          {children}
-        </AuthProvider>
+    <html lang="en" suppressHydrationWarning={true}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+      </head>
+      <body suppressHydrationWarning={true}>
+        <ThemeProvider>
+          <AuthProvider>
+            {children}
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

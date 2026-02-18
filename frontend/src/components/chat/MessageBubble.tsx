@@ -3,45 +3,26 @@
 import { useState } from "react";
 import clsx from "clsx";
 import { Copy, Check, ChevronDown, ChevronUp } from "lucide-react";
-import type { Message, Citation } from "@/lib/api/chat";
-import { CitationChip } from "./CitationChip";
+import type { Message } from "@/lib/api/chat";
+import { MarkdownMessage } from "./MarkdownMessage";
+import { IconFrame } from "@/components/ui/IconFrame";
 
 interface MessageBubbleProps {
     message: Message;
     isStreaming?: boolean;
+    className?: string;
 }
 
-export function MessageBubble({ message, isStreaming = false }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming = false, className }: MessageBubbleProps) {
     const [copied, setCopied] = useState(false);
     const [showSources, setShowSources] = useState(false);
     const isUser = message.role === "user";
+    const citationAnchorPrefix = `message-${message.id}`;
 
     const handleCopy = async () => {
         await navigator.clipboard.writeText(message.content);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-    };
-
-    // Parse content for citation references like [1], [2]
-    const renderContent = (content: string, citations: Citation[]) => {
-        if (!citations || citations.length === 0) {
-            return <span>{content}</span>;
-        }
-
-        // Split by citation patterns [1], [2], etc.
-        const parts = content.split(/(\[\d+\])/g);
-
-        return parts.map((part, i) => {
-            const match = part.match(/\[(\d+)\]/);
-            if (match) {
-                const index = parseInt(match[1], 10) - 1;
-                const citation = citations[index];
-                if (citation) {
-                    return <CitationChip key={i} index={index} citation={citation} />;
-                }
-            }
-            return <span key={i}>{part}</span>;
-        });
     };
 
     // Format time
@@ -54,45 +35,49 @@ export function MessageBubble({ message, isStreaming = false }: MessageBubblePro
     };
 
     return (
-        <div className="max-w-3xl">
+        <div className={clsx("w-full", className)}>
             {/* Sender Label */}
-            <div className="mb-1 text-[12px] leading-[16px] text-white/60">
+            <div className="mb-1 text-[12px] leading-[16px] text-secondary">
                 {isUser ? "You" : "Synaptiq"} • {formatTime(message.created_at)}
             </div>
 
             {/* Message Container */}
             <div
                 className={clsx(
-                    "rounded-lg border border-white/10",
-                    isUser ? "bg-white/[0.03]" : "bg-white/[0.02]"
+                    "rounded-xl border",
+                    isUser ? "border-border bg-elevated/60" : "border-border bg-surface"
                 )}
             >
                 {/* Content */}
-                <div className="p-3">
-                    <div className="text-[13px] leading-[18px] text-white/90 whitespace-pre-wrap break-words">
-                        {isUser
-                            ? message.content
-                            : renderContent(message.content, message.citations)}
-                        {isStreaming && (
-                            <span className="inline-block w-2 h-4 ml-1 bg-white/60 animate-pulse" />
-                        )}
-                    </div>
+                <div className="p-4">
+                    {isUser ? (
+                        <div className="text-[13px] leading-[21px] text-primary/90 whitespace-pre-wrap break-words">
+                            {message.content}
+                        </div>
+                    ) : (
+                        <MarkdownMessage content={message.content} citationAnchorPrefix={citationAnchorPrefix} />
+                    )}
+                    {isStreaming && (
+                        <span className="inline-block w-2 h-4 ml-1 bg-primary/50 animate-pulse" />
+                    )}
                 </div>
 
                 {/* Assistant message extras */}
                 {!isUser && !isStreaming && (
-                    <div className="border-t border-white/10">
+                    <div className="border-t border-border">
                         {/* Actions Row */}
-                        <div className="p-3 flex items-center gap-2">
+                        <div className="px-4 py-3 flex items-center gap-2">
                             <button
                                 onClick={handleCopy}
-                                className="h-8 px-2.5 rounded-md border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] text-[12px] leading-[16px] text-white/70 hover:text-white flex items-center gap-1.5 transition-colors"
+                                className="h-8 px-2.5 rounded-md border border-border bg-elevated hover:bg-[var(--hover-bg)] text-[12px] leading-[16px] text-secondary hover:text-primary flex items-center gap-1.5 transition-colors"
                             >
-                                {copied ? (
-                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                ) : (
-                                    <Copy className="w-3.5 h-3.5" />
-                                )}
+                                <IconFrame
+                                    icon={copied ? Check : Copy}
+                                    size="sm"
+                                    tone={copied ? "source" : "neutral"}
+                                    className="w-6 h-6 rounded-md border-transparent"
+                                    iconClassName="w-3.5 h-3.5"
+                                />
                                 {copied ? "Copied" : "Copy"}
                             </button>
 
@@ -100,7 +85,7 @@ export function MessageBubble({ message, isStreaming = false }: MessageBubblePro
                             {message.citations && message.citations.length > 0 && (
                                 <button
                                     onClick={() => setShowSources(!showSources)}
-                                    className="h-8 px-2.5 rounded-md border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] text-[12px] leading-[16px] text-white/70 hover:text-white flex items-center gap-1.5 transition-colors ml-auto"
+                                    className="h-8 px-2.5 rounded-md border border-border bg-elevated hover:bg-[var(--hover-bg)] text-[12px] leading-[16px] text-secondary hover:text-primary flex items-center gap-1.5 transition-colors ml-auto"
                                 >
                                     {message.citations.length} source{message.citations.length > 1 ? "s" : ""}
                                     {showSources ? (
@@ -114,24 +99,35 @@ export function MessageBubble({ message, isStreaming = false }: MessageBubblePro
 
                         {/* Expanded Sources Panel */}
                         {showSources && message.citations && message.citations.length > 0 && (
-                            <div className="border-t border-white/10 p-3 space-y-2">
+                            <div className="border-t border-border p-3 space-y-2">
                                 {message.citations.map((citation, index) => (
                                     <div
+                                        id={`${citationAnchorPrefix}-citation-${index + 1}`}
                                         key={index}
-                                        className="p-3 rounded-md border border-white/10 bg-white/[0.02] hover:bg-white/[0.04] transition-colors"
+                                        className="p-3 rounded-md border border-border bg-elevated hover:bg-[var(--hover-bg)] transition-colors scroll-mt-24"
                                     >
                                         <div className="flex items-start gap-3">
-                                            <span className="flex items-center justify-center min-w-[22px] h-[22px] text-[11px] font-medium bg-white/10 text-white/80 rounded">
+                                            <span className="flex items-center justify-center min-w-[24px] h-[24px] text-[11px] font-medium bg-canvas/50 text-primary/80 rounded border border-border">
                                                 {index + 1}
                                             </span>
                                             <div className="flex-1 min-w-0">
-                                                <h4 className="text-[13px] leading-[18px] font-medium text-white truncate">
+                                                <h4 className="text-[13px] leading-[18px] font-medium text-primary truncate">
                                                     {citation.title || citation.source_title || "Unknown Source"}
                                                 </h4>
                                                 {citation.chunk_text && (
-                                                    <p className="text-[12px] leading-[16px] text-white/60 line-clamp-2 mt-1">
+                                                    <p className="text-[12px] leading-[16px] text-secondary line-clamp-2 mt-1">
                                                         {citation.chunk_text}
                                                     </p>
+                                                )}
+                                                {(citation.url || citation.source_url) && (
+                                                    <a
+                                                        href={citation.url || citation.source_url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-block mt-1 text-[12px] text-accent hover:underline"
+                                                    >
+                                                        Open source
+                                                    </a>
                                                 )}
                                             </div>
                                         </div>
@@ -142,8 +138,8 @@ export function MessageBubble({ message, isStreaming = false }: MessageBubblePro
 
                         {/* Confidence indicator */}
                         {message.confidence !== undefined && message.confidence !== null && (
-                            <div className="border-t border-white/10 p-3 flex items-center gap-2">
-                                <span className="text-[12px] leading-[16px] text-white/60">Confidence</span>
+                            <div className="border-t border-border p-3 flex items-center gap-2">
+                                <span className="text-[12px] leading-[16px] text-secondary">Confidence</span>
                                 <span
                                     className={clsx(
                                         "px-1.5 py-0.5 rounded text-[11px] font-medium border",

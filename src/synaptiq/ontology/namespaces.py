@@ -327,3 +327,83 @@ def get_relationship_uri(relation_type: str) -> str:
     normalized = relation_type.lower().strip()
     return RELATIONSHIP_TYPES.get(normalized, SYNAPTIQ.term("relatedTo"))
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# QUERY-TIME SYNONYM RESOLUTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+COMMON_SYNONYMS: dict[str, list[str]] = {
+    # AI / Machine Learning
+    "ai": ["artificial intelligence"],
+    "artificial intelligence": ["ai"],
+    "ml": ["machine learning"],
+    "machine learning": ["ml"],
+    "dl": ["deep learning"],
+    "deep learning": ["dl"],
+    "nlp": ["natural language processing"],
+    "natural language processing": ["nlp"],
+    "cv": ["computer vision"],
+    "computer vision": ["cv"],
+    "nn": ["neural network", "neural networks"],
+    "neural network": ["nn", "neural networks"],
+    "neural networks": ["nn", "neural network"],
+    "rnn": ["recurrent neural network"],
+    "recurrent neural network": ["rnn"],
+    "cnn": ["convolutional neural network"],
+    "convolutional neural network": ["cnn", "convnet"],
+    "llm": ["large language model"],
+    "large language model": ["llm"],
+    "gpt": ["generative pre-trained transformer"],
+    "rl": ["reinforcement learning"],
+    "reinforcement learning": ["rl"],
+    # Physics
+    "gr": ["general relativity"],
+    "general relativity": ["gr", "relativity"],
+    "qm": ["quantum mechanics"],
+    "quantum mechanics": ["qm", "quantum theory", "quantum physics"],
+    "qft": ["quantum field theory"],
+    "quantum field theory": ["qft"],
+    "em": ["electromagnetism"],
+    "electromagnetism": ["em"],
+    "sr": ["special relativity"],
+    "special relativity": ["sr"],
+    # Math
+    "pde": ["partial differential equation"],
+    "ode": ["ordinary differential equation"],
+    "linear algebra": ["lin alg"],
+    # Computing
+    "api": ["application programming interface"],
+    "sql": ["structured query language"],
+    "db": ["database"],
+    "os": ["operating system"],
+    "gpu": ["graphics processing unit"],
+    "cpu": ["central processing unit"],
+}
+
+
+def expand_synonyms(term: str) -> list[str]:
+    """
+    Expand a query term into itself plus known synonyms.
+    
+    Used at query time so that a user asking about "CNNs" also
+    searches for "convolutional neural network", etc.
+    
+    Args:
+        term: The search term to expand
+        
+    Returns:
+        List of terms to search for (always includes the original)
+    """
+    normalized = term.lower().strip()
+    # Strip trailing 's' for simple pluralization
+    singular = normalized.rstrip("s") if len(normalized) > 3 and normalized.endswith("s") else normalized
+    
+    candidates = {normalized}
+    
+    for variant in [normalized, singular]:
+        if variant in COMMON_SYNONYMS:
+            for syn in COMMON_SYNONYMS[variant]:
+                candidates.add(syn.lower())
+    
+    return list(candidates)
+

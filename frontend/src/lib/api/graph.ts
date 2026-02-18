@@ -50,7 +50,13 @@ export interface JITTreeNode {
         [key: string]: any;
     };
     children: JITTreeNode[];
-    adjacencies?: JITAdjacency[];  // Cross-node connections
+    adjacencies?: JITAdjacency[];
+}
+
+export interface GraphFilters {
+    relTypes?: string[];
+    sourceFilter?: string;
+    minImportance?: number;
 }
 
 export const graphApi = {
@@ -65,9 +71,20 @@ export const graphApi = {
         return response.data;
     },
 
-    // New: Get JIT-compatible tree directly for root view
-    getJITTree: async (): Promise<JITTreeNode> => {
-        const response = await api.get("/graph/neighborhood");
+    getJITTree: async (filters?: GraphFilters): Promise<JITTreeNode> => {
+        const params = new URLSearchParams();
+        if (filters?.relTypes && filters.relTypes.length > 0) {
+            params.set("rel_types", filters.relTypes.join(","));
+        }
+        if (filters?.sourceFilter) {
+            params.set("source_filter", filters.sourceFilter);
+        }
+        if (filters?.minImportance !== undefined) {
+            params.set("min_importance", String(filters.minImportance));
+        }
+        const query = params.toString();
+        const url = `/graph/neighborhood${query ? `?${query}` : ""}`;
+        const response = await api.get(url);
         return response.data;
     }
 };

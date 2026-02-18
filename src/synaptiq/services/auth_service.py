@@ -260,6 +260,25 @@ class AuthService:
             select(User).where(User.id == user_id)
         )
         return result.scalar_one_or_none()
+
+    async def get_user_by_oauth(self, provider: str, oauth_id: str) -> Optional[User]:
+        """
+        Get a user by OAuth provider identifier.
+
+        Args:
+            provider: OAuth provider name (e.g. "google", "github")
+            oauth_id: Provider-specific unique user ID
+
+        Returns:
+            User if found, None otherwise
+        """
+        result = await self.session.execute(
+            select(User).where(
+                User.oauth_provider == provider.lower().strip(),
+                User.oauth_id == oauth_id.strip(),
+            )
+        )
+        return result.scalar_one_or_none()
     
     # =========================================================================
     # Auth Flows
@@ -385,8 +404,138 @@ class AuthService:
         token_pair = await self._create_token_pair(user, user_agent, ip_address)
         
         logger.info("User logged in", user_id=user.id, email=email)
-        
+
         return user, token_pair
+
+    async def login_with_oauth(
+        self,
+        provider: str,
+        oauth_id: str,
+        email: str,
+        name: Optional[str] = None,
+        avatar_url: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> Tuple[User, TokenPair, bool]:
+        """
+        Authenticate or create a user from a trusted OAuth identity.
+
+        Args:
+            provider: OAuth provider name ("google" or "github")
+            oauth_id: Provider-specific user ID
+            email: Verified email from provider
+            name: Optional profile name from provider
+            avatar_url: Optional avatar URL from provider
+            user_agent: Optional request user agent
+            ip_address: Optional request IP
+
+        Returns:
+            Tuple of (User, TokenPair, is_new_user)
+
+        Raises:
+            AuthError: If account cannot be authenticated
+        """
+        provider = provider.lower().strip()
+        oauth_id = oauth_id.strip()
+        email = email.lower().strip()
+
+        if provider not in {"google", "github"}:
+            raise AuthError(
+                "Unsupported OAuth provider",
+                code="unsupported_oauth_provider",
+            )
+
+        if not oauth_id:
+            raise AuthError(
+                "OAuth profile missing identifier",
+                code="oauth_profile_invalid",
+            )
+
+        if not email:
+            raise AuthError(
+                "OAuth profile missing email",
+                code="oauth_profile_invalid",
+            )
+
+        is_new_user = False
+        user = await self.get_user_by_oauth(provider, oauth_id)
+
+        # Existing linked OAuth account
+        if user:
+            if not user.is_active:
+                raise AuthError(
+                    "This account has been deactivated",
+                    code="account_deactivated",
+                )
+        else:
+            # Fallback to verified email reconciliation
+            user = await self.get_user_by_email(email)
+            if user:
+                if not user.is_active:
+                    raise AuthError(
+                        "This account has been deactivated",
+                        code="account_deactivated",
+                    )
+
+                # If this provider is already linked, ensure provider IDs match.
+                if (
+                    user.oauth_provider == provider
+                    and user.oauth_id
+                    and user.oauth_id != oauth_id
+                ):
+                    raise AuthError(
+                        "OAuth account conflict detected for this email",
+                        code="oauth_account_conflict",
+                    )
+
+                # Link provider for first-time social login on an email/password account.
+                if not user.oauth_provider and not user.oauth_id:
+                    user.oauth_provider = provider
+                    user.oauth_id = oauth_id
+                elif user.oauth_provider == provider and not user.oauth_id:
+                    user.oauth_id = oauth_id
+            else:
+                # New OAuth-only account
+                user = User(
+                    email=email,
+                    password_hash=None,
+                    name=name,
+                    avatar_url=avatar_url,
+                    oauth_provider=provider,
+                    oauth_id=oauth_id,
+                    is_verified=True,
+                )
+                self.session.add(user)
+                await self.session.flush()
+                self.session.add(UserSettings(user_id=user.id))
+                is_new_user = True
+
+                logger.info(
+                    "User signed up with OAuth",
+                    user_id=user.id,
+                    email=email,
+                    provider=provider,
+                )
+
+        # Sync profile data from the OAuth provider used for this login.
+        # This keeps display name/avatar aligned with the user's Google/GitHub profile.
+        if name and name.strip():
+            user.name = name.strip()
+        if avatar_url and avatar_url.strip():
+            user.avatar_url = avatar_url.strip()
+        if not user.is_verified:
+            user.is_verified = True
+
+        token_pair = await self._create_token_pair(user, user_agent, ip_address)
+
+        logger.info(
+            "User logged in with OAuth",
+            user_id=user.id,
+            email=user.email,
+            provider=provider,
+        )
+
+        return user, token_pair, is_new_user
     
     async def refresh_token(
         self,
@@ -638,4 +787,3 @@ class AuthService:
         logger.info("Password reset completed", user_id=user.id)
         
         return True
-

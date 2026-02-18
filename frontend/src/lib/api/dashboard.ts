@@ -1,5 +1,4 @@
-
-const API_BASE_URL = "http://localhost:8000/api/v1";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
 
 export interface DashboardStats {
     concepts_count: number;
@@ -8,6 +7,7 @@ export interface DashboardStats {
     definitions_count: number;
     relationships_count: number;
     graph_uri: string | null;
+    growth_percent?: number | null;
 }
 
 export interface ActivityItem {
@@ -25,6 +25,38 @@ export interface Job {
     source_type: string;
     source_url: string;
     created_at: string;
+}
+
+interface SourcesApiResponse {
+    sources: Array<{
+        id: string;
+        source_type?: string;
+        source_title?: string;
+        source_url?: string;
+        ingested_at?: string;
+    }>;
+}
+
+interface JobsApiResponse {
+    jobs: Array<{
+        id: string;
+        status: string;
+        source_type?: string;
+        source_url?: string;
+        created_at: string;
+    }>;
+}
+
+interface DashboardApiResponse {
+    stats: DashboardStats;
+    recent_sources?: Array<{
+        id: string;
+        type?: string;
+        title?: string;
+        url?: string;
+        time?: string;
+    }>;
+    active_jobs?: JobsApiResponse["jobs"];
 }
 
 export class DashboardService {
@@ -75,21 +107,25 @@ export class DashboardService {
                 return [];
             }
 
-            const sourcesData = await sourcesRes.json();
-            const jobsData = await jobsRes.json();
+            const sourcesData = await sourcesRes.json() as SourcesApiResponse;
+            const jobsData = await jobsRes.json() as JobsApiResponse;
 
             // Map sources to activity items
-            const sourceItems: ActivityItem[] = sourcesData.sources.map((s: any) => ({
-                id: s.id,
-                type: s.source_type,
-                title: s.source_title,
-                source: this.formatSourceUrl(s.source_url),
-                time: s.ingested_at,
+            const sourceItems: ActivityItem[] = sourcesData.sources.map((source) => ({
+                id: source.id,
+                type: source.source_type || "unknown",
+                title: source.source_title || "Untitled",
+                source: this.formatSourceUrl(source.source_url || ""),
+                time: source.ingested_at || new Date().toISOString(),
                 status: "completed",
             }));
 
             // Collect normalized source URLs so we can deduplicate against jobs
-            const sourceUrls = new Set(sourcesData.sources.map((s: any) => this.normalizeUrl(s.source_url)));
+            const sourceUrls = new Set(
+                sourcesData.sources
+                    .map((source) => source.source_url || "")
+                    .map((sourceUrl) => this.normalizeUrl(sourceUrl))
+            );
 
             // Filter out stale jobs (stuck in processing for over 1 hour)
             const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -97,23 +133,23 @@ export class DashboardService {
 
             // Map jobs to activity items, excluding completed, already-ingested, or stale jobs
             const jobItems: ActivityItem[] = jobsData.jobs
-                .filter((j: any) => {
-                    if (j.status === "completed") return false;
-                    if (sourceUrls.has(this.normalizeUrl(j.source_url))) return false;
+                .filter((job) => {
+                    if (job.status === "completed") return false;
+                    if (sourceUrls.has(this.normalizeUrl(job.source_url || ""))) return false;
                     // Exclude stale processing jobs (stuck for over 1 hour)
-                    if (j.status === "processing") {
-                        const jobAge = now - new Date(j.created_at).getTime();
+                    if (job.status === "processing") {
+                        const jobAge = now - new Date(job.created_at).getTime();
                         if (jobAge > ONE_HOUR_MS) return false;
                     }
                     return true;
                 })
-                .map((j: any) => ({
-                    id: j.id,
-                    type: j.source_type || "unknown",
-                    title: j.source_url,
+                .map((job) => ({
+                    id: job.id,
+                    type: job.source_type || "unknown",
+                    title: job.source_url || "Untitled",
                     source: "Ingesting...",
-                    time: j.created_at,
-                    status: j.status,
+                    time: job.created_at,
+                    status: job.status as "processing" | "failed",
                 }));
 
             // Merge and sort
@@ -135,6 +171,8 @@ export class DashboardService {
     async getDashboard(): Promise<{
         stats: DashboardStats | null;
         activity: ActivityItem[];
+        jobs: Job[];
+        recentSources: ActivityItem[];
     }> {
         try {
             const token = this.getToken();
@@ -142,23 +180,27 @@ export class DashboardService {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
-            if (res.status === 401) return { stats: null, activity: [] };
+            if (res.status === 401) return { stats: null, activity: [], jobs: [], recentSources: [] };
             if (!res.ok) throw new Error("Failed to fetch dashboard");
 
-            const data = await res.json();
+            const data = await res.json() as DashboardApiResponse;
 
             // Map sources to activity items
-            const sourceItems: ActivityItem[] = (data.recent_sources || []).map((s: any) => ({
-                id: s.id,
-                type: s.type,
-                title: s.title,
-                source: this.formatSourceUrl(s.url),
-                time: s.time,
+            const sourceItems: ActivityItem[] = (data.recent_sources || []).map((source) => ({
+                id: source.id,
+                type: source.type || "unknown",
+                title: source.title || "Untitled",
+                source: this.formatSourceUrl(source.url || ""),
+                time: source.time || new Date().toISOString(),
                 status: "completed" as const,
             }));
 
             // Collect normalized source URLs so we can deduplicate against jobs
-            const sourceUrls = new Set((data.recent_sources || []).map((s: any) => this.normalizeUrl(s.url)));
+            const sourceUrls = new Set(
+                (data.recent_sources || [])
+                    .map((source) => source.url || "")
+                    .map((sourceUrl) => this.normalizeUrl(sourceUrl))
+            );
 
             // Filter out stale jobs (stuck in processing for over 1 hour)
             const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -166,23 +208,23 @@ export class DashboardService {
 
             // Map jobs to activity items, excluding completed, already-ingested, or stale jobs
             const jobItems: ActivityItem[] = (data.active_jobs || [])
-                .filter((j: any) => {
-                    if (j.status === "completed") return false;
-                    if (sourceUrls.has(this.normalizeUrl(j.source_url))) return false;
+                .filter((job) => {
+                    if (job.status === "completed") return false;
+                    if (sourceUrls.has(this.normalizeUrl(job.source_url || ""))) return false;
                     // Exclude stale processing jobs (stuck for over 1 hour)
-                    if (j.status === "processing") {
-                        const jobAge = now - new Date(j.created_at).getTime();
+                    if (job.status === "processing") {
+                        const jobAge = now - new Date(job.created_at).getTime();
                         if (jobAge > ONE_HOUR_MS) return false;
                     }
                     return true;
                 })
-                .map((j: any) => ({
-                    id: j.id,
-                    type: j.source_type || "unknown",
-                    title: j.source_url,
+                .map((job) => ({
+                    id: job.id,
+                    type: job.source_type || "unknown",
+                    title: job.source_url || "Untitled",
                     source: "Ingesting...",
-                    time: j.created_at,
-                    status: j.status as "processing" | "failed",
+                    time: job.created_at,
+                    status: job.status as "processing" | "failed",
                 }));
 
             // Merge and sort
@@ -190,13 +232,23 @@ export class DashboardService {
                 .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
                 .slice(0, 5);
 
+            const jobs: Job[] = (data.active_jobs || []).map((job) => ({
+                id: String(job.id),
+                status: String(job.status),
+                source_type: String(job.source_type || "unknown"),
+                source_url: String(job.source_url || ""),
+                created_at: String(job.created_at),
+            }));
+
             return {
                 stats: data.stats,
                 activity,
+                jobs,
+                recentSources: sourceItems,
             };
         } catch (error) {
             console.error("getDashboard failed", error);
-            return { stats: null, activity: [] };
+            return { stats: null, activity: [], jobs: [], recentSources: [] };
         }
     }
 
@@ -212,7 +264,7 @@ export class DashboardService {
 
             const data = await res.json();
             return data.jobs;
-        } catch (error) {
+        } catch {
             // silent fail for polling
             return [];
         }

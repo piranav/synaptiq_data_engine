@@ -3,15 +3,18 @@
 import { useState, useCallback, useRef } from "react";
 import { PoincareDisk } from "@/components/graph/PoincareDisk";
 import { GraphSidebar, NodeInfo } from "@/components/graph/GraphSidebar";
+import { GraphFiltersPanel } from "@/components/graph/GraphFilters";
 import { ArrowLeft, PanelRightOpen, PanelRightClose } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
+import type { GraphFilters } from "@/lib/api/graph";
 
 export default function GraphPage() {
     const { user } = useAuth();
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [centeredNode, setCenteredNode] = useState<NodeInfo | null>(null);
     const [adjacentNodes, setAdjacentNodes] = useState<NodeInfo[]>([]);
+    const [filters, setFilters] = useState<GraphFilters>({});
 
     // Store the navigation function from PoincareDisk
     const navigateToNodeRef = useRef<((nodeId: string) => void) | null>(null);
@@ -68,8 +71,12 @@ export default function GraphPage() {
                         userName={user?.name ?? undefined}
                         onCenterChange={handleCenterChange}
                         onHypertreeReady={handleHypertreeReady}
+                        filters={filters}
                     />
                 </div>
+
+                {/* Filter Controls */}
+                <GraphFiltersPanel filters={filters} onFiltersChange={setFilters} />
             </div>
 
             {/* Sidebar */}

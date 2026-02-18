@@ -1,28 +1,67 @@
 "use client";
 
-import { Search } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { Monitor, Moon, Search, Sun, Plus, Mic } from "lucide-react";
+import clsx from "clsx";
+import { useTheme } from "@/contexts/ThemeContext";
+
+const themeItems = [
+    { mode: "light", label: "Light", icon: Sun },
+    { mode: "dark", label: "Dark", icon: Moon },
+    { mode: "system", label: "System", icon: Monitor },
+] as const;
 
 export function TopBar() {
-    const pathname = usePathname();
-
-    // specific breadcrumb logic could go here
-    const pathSegments = pathname.split("/").filter(Boolean);
-    const mainSection = pathSegments[0] ? pathSegments[0].charAt(0).toUpperCase() + pathSegments[0].slice(1) : "Home";
-    const subSection = "Overview"; // placeholder for now
+    const { themeMode, setThemeMode } = useTheme();
 
     return (
-        <header className="sticky top-0 z-10 glass border-b border-white/10 px-8 h-14 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm">
-                <span className="text-white font-medium">{mainSection}</span>
-                <span className="text-white/40">/</span>
-                <span className="text-white/60 hover:text-white transition-colors cursor-pointer">{subSection}</span>
+        <header className="sticky top-0 z-10 bg-[var(--glass-bg)] border-b border-border px-5 md:px-8 h-[var(--topbar-height)] flex items-center justify-between backdrop-blur-sm">
+            <div className="flex items-center gap-3">
+                <button
+                    type="button"
+                    aria-label="Create new item"
+                    className="h-10 w-10 rounded-full border border-border bg-surface text-primary hover:bg-[var(--hover-bg)] transition-colors inline-flex items-center justify-center"
+                >
+                    <Plus className="w-4 h-4" strokeWidth={1.8} />
+                </button>
+                <div className="dashboard-pill h-10 px-3 gap-2 w-[160px] sm:w-[260px] md:w-[340px]">
+                    <Search className="w-4 h-4 text-secondary" strokeWidth={1.7} />
+                    <input
+                        type="search"
+                        placeholder="Start searching here..."
+                        className="w-full bg-transparent text-sm text-primary placeholder:text-secondary outline-none"
+                    />
+                </div>
             </div>
-            <div className="flex items-center gap-4">
-                <button className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.03] border border-white/10 rounded-lg text-xs text-white/70 cursor-pointer hover:bg-white/[0.06] hover:text-white hover:border-white/20 transition-all">
-                    <Search className="w-3.5 h-3.5" />
-                    <span className="mr-2">Search...</span>
-                    <span className="bg-white/10 px-1.5 py-0.5 rounded text-[10px]">⌘K</span>
+
+            <div className="flex items-center gap-2">
+                <div className="dashboard-pill p-1 gap-1">
+                    {themeItems.map((item) => {
+                        const Icon = item.icon;
+                        const isActive = themeMode === item.mode;
+                        return (
+                            <button
+                                key={item.mode}
+                                onClick={() => setThemeMode(item.mode)}
+                                title={item.label}
+                                aria-label={item.label}
+                                className={clsx(
+                                    "h-8 w-8 rounded-full inline-flex items-center justify-center transition-colors",
+                                    isActive
+                                        ? "bg-surface text-primary border border-border shadow-card"
+                                        : "text-secondary hover:text-primary hover:bg-[var(--hover-bg)]"
+                                )}
+                            >
+                                <Icon className="w-3.5 h-3.5" strokeWidth={1.7} />
+                            </button>
+                        );
+                    })}
+                </div>
+                <button
+                    type="button"
+                    aria-label="Voice input"
+                    className="h-10 w-10 rounded-full border border-border bg-surface text-primary hover:bg-[var(--hover-bg)] transition-colors inline-flex items-center justify-center"
+                >
+                    <Mic className="w-4 h-4" strokeWidth={1.8} />
                 </button>
             </div>
         </header>

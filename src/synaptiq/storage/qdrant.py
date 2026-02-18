@@ -174,6 +174,7 @@ class QdrantStore:
         source_type: Optional[str] = None,
         has_definition: Optional[bool] = None,
         concepts: Optional[list[str]] = None,
+        document_ids: Optional[list[str]] = None,
         score_threshold: float = 0.0,
     ) -> list[dict[str, Any]]:
         """
@@ -186,6 +187,7 @@ class QdrantStore:
             source_type: Filter by source type
             has_definition: Filter for definition chunks
             concepts: Filter by concepts (any match)
+            document_ids: Filter by source document IDs
             score_threshold: Minimum similarity score
             
         Returns:
@@ -212,6 +214,14 @@ class QdrantStore:
                 models.FieldCondition(
                     key="has_definition",
                     match=models.MatchValue(value=has_definition),
+                )
+            )
+
+        if document_ids:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchAny(any=document_ids),
                 )
             )
 

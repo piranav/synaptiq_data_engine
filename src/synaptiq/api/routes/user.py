@@ -84,6 +84,7 @@ class UserStatsResponse(BaseModel):
     definitions_count: int
     relationships_count: int
     graph_uri: Optional[str]
+    growth_percent: Optional[float] = None
 
 
 class MessageResponse(BaseModel):
@@ -303,7 +304,8 @@ async def get_dashboard(
             logger.warning("Failed to get stats", error=str(stats))
             stats = UserStatsResponse(
                 concepts_count=0, sources_count=0, chunks_count=0,
-                definitions_count=0, relationships_count=0, graph_uri=None
+                definitions_count=0, relationships_count=0, graph_uri=None,
+                growth_percent=None,
             )
         else:
             stats = UserStatsResponse(**stats.to_dict())
@@ -444,4 +446,3 @@ async def provision_graph(
         )
     finally:
         await user_service.close()
-

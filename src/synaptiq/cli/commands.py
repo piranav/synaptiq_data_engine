@@ -498,6 +498,44 @@ def status():
     run_async(_status())
 
 
+@cli.command()
+@click.option("--user-id", "-u", required=True, help="User ID to consolidate")
+def consolidate(user_id: str):
+    """
+    Run post-ingestion graph consolidation.
+
+    Merges duplicate concepts, removes orphans, cleans up weak
+    relationships, and recomputes importance scores.
+    """
+    async def _consolidate():
+        from synaptiq.services.graph_consolidation import GraphConsolidationService
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Consolidating knowledge graph...", total=None)
+
+            service = GraphConsolidationService()
+            summary = await service.consolidate(user_id)
+
+            progress.update(task, completed=True, description="Done!")
+
+        # Display summary
+        table = Table(title="Consolidation Summary")
+        table.add_column("Action", style="cyan")
+        table.add_column("Count", style="green", justify="right")
+
+        table.add_row("Duplicates merged", str(summary.get("duplicates_merged", 0)))
+        table.add_row("Orphans removed", str(summary.get("orphans_removed", 0)))
+        table.add_row("Weak relationships removed", str(summary.get("weak_rels_removed", 0)))
+
+        console.print(table)
+
+    run_async(_consolidate())
+
+
 # Entry point
 if __name__ == "__main__":
     cli()

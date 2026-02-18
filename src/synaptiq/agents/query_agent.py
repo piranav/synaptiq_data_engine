@@ -7,7 +7,7 @@ and response synthesis using OpenAI Agents SDK.
 
 import os
 from pathlib import Path
-from typing import Optional, AsyncIterator
+from typing import Optional, AsyncIterator, Any
 import structlog
 
 from config.settings import get_settings
@@ -24,7 +24,7 @@ from agents.result import RunResultStreaming
 from synaptiq.storage.fuseki import FusekiStore
 from synaptiq.storage.qdrant import QdrantStore
 from synaptiq.processors.embedder import EmbeddingGenerator
-from synaptiq.ontology.namespaces import get_sparql_prefixes
+from synaptiq.ontology.namespaces import get_sparql_prefixes, expand_synonyms
 
 from .context import AgentContext
 from .schemas import (
@@ -141,7 +141,7 @@ class QueryAgent:
             IntentType.DEFINITION: RetrievalStrategy.GRAPH_FIRST,
             IntentType.EXPLORATION: RetrievalStrategy.GRAPH_FIRST,
             IntentType.RELATIONSHIP: RetrievalStrategy.GRAPH_ONLY,
-            IntentType.SOURCE_RECALL: RetrievalStrategy.GRAPH_ONLY,
+            IntentType.SOURCE_RECALL: RetrievalStrategy.GRAPH_FIRST,
             IntentType.SEMANTIC_SEARCH: RetrievalStrategy.VECTOR_FIRST,
             IntentType.INVENTORY: RetrievalStrategy.GRAPH_ONLY,
             IntentType.GENERAL: RetrievalStrategy.LLM_ONLY,
@@ -171,6 +171,10 @@ class QueryAgent:
                 "results": [],
                 "fallback_chain": fallback_chain,
             }
+
+        vector_document_ids = await self._resolve_vector_document_scope(
+            context, intent
+        )
         
         if strategy in (RetrievalStrategy.GRAPH_FIRST, RetrievalStrategy.GRAPH_ONLY):
             # Try graph first
@@ -181,7 +185,11 @@ class QueryAgent:
                 # GRAPH_FIRST: also query vector to supplement with actual content
                 if strategy == RetrievalStrategy.GRAPH_FIRST:
                     fallback_chain.append("vector")
-                    vector_results = await self._query_vector(query, context)
+                    vector_results = await self._query_vector(
+                        query,
+                        context,
+                        document_ids=vector_document_ids,
+                    )
                     
                     return {
                         "source": "graph_and_vector" if vector_results else "graph",
@@ -202,7 +210,11 @@ class QueryAgent:
             # Fallback to vector (unless GRAPH_ONLY)
             if strategy == RetrievalStrategy.GRAPH_FIRST:
                 fallback_chain.append("vector")
-                vector_results = await self._query_vector(query, context)
+                vector_results = await self._query_vector(
+                    query,
+                    context,
+                    document_ids=vector_document_ids,
+                )
                 
                 if vector_results:
                     return {
@@ -214,7 +226,11 @@ class QueryAgent:
         elif strategy == RetrievalStrategy.VECTOR_FIRST:
             # Try vector first
             fallback_chain.append("vector")
-            vector_results = await self._query_vector(query, context)
+            vector_results = await self._query_vector(
+                query,
+                context,
+                document_ids=vector_document_ids,
+            )
             
             if vector_results:
                 # Enrich with graph data
@@ -246,7 +262,11 @@ class QueryAgent:
             fallback_chain.extend(["graph", "vector"])
             
             graph_results = await self._query_graph(query, context, intent)
-            vector_results = await self._query_vector(query, context)
+            vector_results = await self._query_vector(
+                query,
+                context,
+                document_ids=vector_document_ids,
+            )
             
             if graph_results or vector_results:
                 return {
@@ -272,19 +292,50 @@ class QueryAgent:
         context: AgentContext,
         intent: IntentClassification,
     ) -> list[dict]:
-        """Query the knowledge graph based on intent and entities."""
+        """
+        Query the knowledge graph based on intent and entities.
+        
+        Returns structured graph data AND the actual chunk text linked
+        to concepts via definedIn/mentionedIn, so the synthesizer has
+        rich textual evidence (not just labels and relationship names).
+        """
         try:
             results = []
             
             # Special handling for INVENTORY intent - list all concepts
             if intent.intent == IntentType.INVENTORY:
                 return await self._query_inventory(context)
-            
-            # Look up each entity
-            for entity in intent.entities:
-                concept_uri = await context.fuseki_store.concept_exists(
-                    context.user_id, entity
+
+            # SOURCE_RECALL is primarily source-filter driven.
+            if intent.intent == IntentType.SOURCE_RECALL and intent.source_filter:
+                return await self._query_source_recall(
+                    context=context,
+                    source_filter=intent.source_filter,
+                    entity_terms=intent.entities,
                 )
+            
+            # Look up each entity, expanding synonyms at query time
+            for entity in intent.entities:
+                concept_uri = None
+                
+                # Try the original term and all its synonyms
+                search_terms = expand_synonyms(entity)
+                for term in search_terms:
+                    concept_uri = await context.fuseki_store.concept_exists(
+                        context.user_id, term
+                    )
+                    if concept_uri:
+                        break
+                
+                if not concept_uri:
+                    # Try fuzzy match as last resort
+                    for term in search_terms:
+                        similar = await context.fuseki_store.find_similar_concepts(
+                            context.user_id, term, limit=3
+                        )
+                        if similar:
+                            concept_uri = similar[0].get("concept")
+                            break
                 
                 if concept_uri:
                     details = await context.fuseki_store.get_concept_with_definition(
@@ -294,17 +345,262 @@ class QueryAgent:
                         context.user_id, concept_uri
                     )
                     
+                    # Fetch chunk text linked to this concept for richer context
+                    chunk_texts = await self._fetch_concept_chunks(
+                        context, concept_uri
+                    )
+                    
                     results.append({
                         "uri": concept_uri,
                         "entity": entity,
                         "details": details,
                         "relationships": relationships,
+                        "chunk_texts": chunk_texts,
                     })
             
             return results
             
         except Exception as e:
             logger.error("Graph query failed", error=str(e))
+            return []
+
+    @staticmethod
+    def _escape_sparql_literal(value: str) -> str:
+        """Escape a string so it is safe inside SPARQL quoted literals."""
+        return (
+            value.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+        )
+
+    async def _resolve_source_document_ids(
+        self,
+        context: AgentContext,
+        source_filter: str,
+    ) -> list[str]:
+        """Find document IDs in the user's graph whose source title matches a filter."""
+        if not source_filter.strip():
+            return []
+
+        source_term = self._escape_sparql_literal(source_filter.lower().strip())
+        sparql = f"""
+        SELECT DISTINCT ?documentId
+        WHERE {{
+            ?source a syn:Source ;
+                    syn:sourceTitle ?sourceTitle ;
+                    syn:documentId ?documentId .
+            FILTER(CONTAINS(LCASE(?sourceTitle), "{source_term}"))
+        }}
+        LIMIT 100
+        """
+
+        rows = await context.fuseki_store.query(
+            user_id=context.user_id,
+            sparql=sparql,
+        )
+        return [row["documentId"] for row in rows if row.get("documentId")]
+
+    async def _resolve_vector_document_scope(
+        self,
+        context: AgentContext,
+        intent: IntentClassification,
+    ) -> Optional[list[str]]:
+        """
+        Build vector document constraints from intent.
+
+        Returning:
+        - `None`: no document constraint
+        - `[]`: constrained but no matching sources (vector query should return empty)
+        - `[doc_id, ...]`: constrain vector search to these sources
+        """
+        if not intent.source_filter:
+            return None
+
+        try:
+            document_ids = await self._resolve_source_document_ids(
+                context=context,
+                source_filter=intent.source_filter,
+            )
+            logger.info(
+                "Resolved source filter to document scope",
+                source_filter=intent.source_filter,
+                document_count=len(document_ids),
+            )
+            return document_ids
+        except Exception as e:
+            logger.warning(
+                "Failed to resolve source filter for vector scope",
+                source_filter=intent.source_filter,
+                error=str(e),
+            )
+            return None
+
+    async def _query_source_recall(
+        self,
+        context: AgentContext,
+        source_filter: str,
+        entity_terms: list[str],
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Query concepts/chunks that came from sources matching `source_filter`."""
+        source_term = self._escape_sparql_literal(source_filter.lower().strip())
+        entity_filters: list[str] = []
+        for term in entity_terms:
+            normalized = term.lower().strip()
+            if not normalized:
+                continue
+            escaped = self._escape_sparql_literal(normalized)
+            entity_filters.append(f'CONTAINS(LCASE(?label), "{escaped}")')
+            entity_filters.append(
+                f'CONTAINS(LCASE(COALESCE(?definitionText, "")), "{escaped}")'
+            )
+
+        entity_filter_clause = ""
+        if entity_filters:
+            entity_filter_clause = f"FILTER({' || '.join(entity_filters)})"
+
+        sparql = f"""
+        SELECT ?concept ?label ?definitionText ?sourceTitle ?sourceUrl ?chunkText ?linkType
+        WHERE {{
+            ?source a syn:Source ;
+                    syn:sourceTitle ?sourceTitle .
+            OPTIONAL {{ ?source syn:sourceUrl ?sourceUrl }}
+            FILTER(CONTAINS(LCASE(?sourceTitle), "{source_term}"))
+
+            ?chunk syn:derivedFrom ?source .
+            {{
+                ?concept syn:definedIn ?chunk .
+                BIND("defined" AS ?linkType)
+            }}
+            UNION
+            {{
+                ?concept syn:mentionedIn ?chunk .
+                BIND("mentioned" AS ?linkType)
+            }}
+
+            ?concept a syn:Concept ;
+                     syn:label ?label .
+            OPTIONAL {{
+                ?concept syn:hasDefinition ?def .
+                ?def syn:definitionText ?definitionText .
+            }}
+            OPTIONAL {{ ?chunk syn:chunkText ?chunkText }}
+            {entity_filter_clause}
+        }}
+        ORDER BY ?label
+        LIMIT {max(limit * 6, 100)}
+        """
+
+        rows = await context.fuseki_store.query(
+            user_id=context.user_id,
+            sparql=sparql,
+        )
+        if not rows:
+            return []
+
+        concepts: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            concept_uri = row.get("concept")
+            if not concept_uri:
+                continue
+
+            concept = concepts.setdefault(
+                concept_uri,
+                {
+                    "uri": concept_uri,
+                    "entity": row.get("label", "Unknown"),
+                    "details": {
+                        "label": row.get("label"),
+                        "definitionText": row.get("definitionText"),
+                        "sourceTitle": row.get("sourceTitle"),
+                        "sourceUrl": row.get("sourceUrl"),
+                    },
+                    "relationships": [],
+                    "chunk_texts": [],
+                },
+            )
+
+            if row.get("definitionText") and not concept["details"].get("definitionText"):
+                concept["details"]["definitionText"] = row.get("definitionText")
+            if row.get("sourceTitle") and not concept["details"].get("sourceTitle"):
+                concept["details"]["sourceTitle"] = row.get("sourceTitle")
+            if row.get("sourceUrl") and not concept["details"].get("sourceUrl"):
+                concept["details"]["sourceUrl"] = row.get("sourceUrl")
+
+            chunk_text = row.get("chunkText", "")
+            if chunk_text:
+                concept["chunk_texts"].append(
+                    {
+                        "text": chunk_text,
+                        "source_title": row.get("sourceTitle", ""),
+                        "source_url": row.get("sourceUrl", ""),
+                        "link_type": row.get("linkType", "mentioned"),
+                    }
+                )
+
+        results = list(concepts.values())[:limit]
+        for concept in results:
+            concept["chunk_texts"].sort(
+                key=lambda chunk: 0 if chunk["link_type"] == "defined" else 1
+            )
+        return results
+
+    async def _fetch_concept_chunks(
+        self,
+        context: AgentContext,
+        concept_uri: str,
+        max_chunks: int = 5,
+    ) -> list[dict]:
+        """
+        Fetch the actual chunk text linked to a concept via definedIn
+        and mentionedIn. This bridges the gap between structured graph
+        data and rich textual evidence for the synthesizer.
+        """
+        try:
+            sparql = f"""
+            SELECT ?chunkText ?sourceTitle ?sourceUrl ?linkType
+            WHERE {{
+                {{
+                    <{concept_uri}> syn:definedIn ?chunk .
+                    ?chunk syn:chunkText ?chunkText .
+                    BIND("defined" AS ?linkType)
+                }}
+                UNION
+                {{
+                    <{concept_uri}> syn:mentionedIn ?chunk .
+                    ?chunk syn:chunkText ?chunkText .
+                    BIND("mentioned" AS ?linkType)
+                }}
+                OPTIONAL {{
+                    ?chunk syn:derivedFrom ?source .
+                    ?source syn:sourceTitle ?sourceTitle .
+                    ?source syn:sourceUrl ?sourceUrl .
+                }}
+            }}
+            LIMIT {max_chunks}
+            """
+            
+            results = await context.fuseki_store.query(
+                user_id=context.user_id,
+                sparql=sparql,
+            )
+            
+            chunks = []
+            for r in results:
+                chunks.append({
+                    "text": r.get("chunkText", ""),
+                    "source_title": r.get("sourceTitle", ""),
+                    "source_url": r.get("sourceUrl", ""),
+                    "link_type": r.get("linkType", "mentioned"),
+                })
+            
+            # Sort so "defined" chunks come first (more relevant)
+            chunks.sort(key=lambda c: 0 if c["link_type"] == "defined" else 1)
+            
+            return chunks
+            
+        except Exception as e:
+            logger.warning("Failed to fetch concept chunks", error=str(e))
             return []
     
     async def _query_inventory(self, context: AgentContext) -> list[dict]:
@@ -359,10 +655,15 @@ class QueryAgent:
         self,
         query: str,
         context: AgentContext,
+        document_ids: Optional[list[str]] = None,
         top_k: int = 5,
     ) -> list[dict]:
         """Query the vector store for similar content."""
         try:
+            if document_ids == []:
+                logger.info("Vector query skipped: constrained source scope has no documents")
+                return []
+
             # Generate query embedding
             query_vector = await context.embedding_generator.generate_single(query)
             
@@ -371,6 +672,7 @@ class QueryAgent:
                 query_vector=query_vector,
                 user_id=context.user_id,
                 limit=top_k,
+                document_ids=document_ids,
             )
             
             logger.info("Vector search results", count=len(results), results=results)
@@ -546,6 +848,16 @@ class QueryAgent:
                     parts.append("Relationships:")
                     for rel in relationships[:5]:
                         parts.append(f"  - {rel.get('relationType', '?')} → {rel.get('relatedLabel', '?')}")
+                
+                # Include chunk text from the graph for richer context
+                chunk_texts = r.get("chunk_texts", [])
+                if chunk_texts:
+                    parts.append("\nRelevant passages from your knowledge base:")
+                    for ct in chunk_texts[:3]:
+                        link_label = "Defines" if ct.get("link_type") == "defined" else "Mentions"
+                        parts.append(f"\n[{link_label}] {ct.get('text', '')[:500]}")
+                        if ct.get("source_title"):
+                            parts.append(f"  — Source: {ct['source_title']}")
         
         elif source == "vector":
             parts.append("\n## Vector Results")
@@ -576,6 +888,15 @@ class QueryAgent:
                     parts.append("Relationships:")
                     for rel in relationships[:5]:
                         parts.append(f"  - {rel.get('relationType', '?')} → {rel.get('relatedLabel', '?')}")
+                
+                chunk_texts = r.get("chunk_texts", [])
+                if chunk_texts:
+                    parts.append("\nRelevant passages from your knowledge base:")
+                    for ct in chunk_texts[:3]:
+                        link_label = "Defines" if ct.get("link_type") == "defined" else "Mentions"
+                        parts.append(f"\n[{link_label}] {ct.get('text', '')[:500]}")
+                        if ct.get("source_title"):
+                            parts.append(f"  — Source: {ct['source_title']}")
             
             if vector:
                 parts.append("\n## Related Content from Notes")
@@ -594,7 +915,11 @@ class QueryAgent:
             if graph:
                 parts.append("\n### From Knowledge Graph:")
                 for r in graph:
-                    parts.append(f"- {r.get('entity', 'Unknown')}: {r.get('details', {}).get('definitionText', 'No definition')[:200]}")
+                    details = r.get("details", {}) or {}
+                    parts.append(f"- {r.get('entity', 'Unknown')}: {details.get('definitionText', 'No definition')[:200]}")
+                    chunk_texts = r.get("chunk_texts", [])
+                    for ct in chunk_texts[:2]:
+                        parts.append(f"  Passage: {ct.get('text', '')[:300]}")
             
             if vector:
                 parts.append("\n### From Vector Search:")

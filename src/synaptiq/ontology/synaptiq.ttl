@@ -211,6 +211,20 @@ syn:slug a owl:DatatypeProperty ;
     rdfs:comment "URL-safe identifier for the concept." ;
     rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
 
+syn:importance a owl:DatatypeProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range xsd:float ;
+    rdfs:label "importance" ;
+    rdfs:comment "Computed importance score based on mention count and source diversity. Higher values indicate core concepts." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
+syn:mentionCount a owl:DatatypeProperty ;
+    rdfs:domain syn:Concept ;
+    rdfs:range xsd:integer ;
+    rdfs:label "mention count" ;
+    rdfs:comment "Number of chunks that define or mention this concept." ;
+    rdfs:isDefinedBy <https://synaptiq.ai/ontology> .
+
 # ───────────────────────────────────────────────────────────────────────────────
 # Definition Properties
 # ───────────────────────────────────────────────────────────────────────────────

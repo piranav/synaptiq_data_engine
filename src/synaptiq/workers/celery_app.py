@@ -39,6 +39,7 @@ celery_app.conf.update(
     # Task routing
     task_routes={
         "synaptiq.workers.tasks.ingest_url_task": {"queue": "ingestion"},
+        "synaptiq.workers.tasks.consolidate_graph_task": {"queue": "ingestion"},
         "synaptiq.workers.tasks.poll_supadata_job_task": {"queue": "polling"},
     },
     
@@ -69,5 +70,4 @@ celery_app.conf.task_queues = {
         "routing_key": "celery",
     },
 }
-
 

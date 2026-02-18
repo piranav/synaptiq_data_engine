@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
-import { User, authService } from "@/lib/api/auth";
+import { AUTH_STATE_CHANGED_EVENT, User, authService } from "@/lib/api/auth";
 import { useRouter } from "next/navigation";
 
 interface AuthContextType {
@@ -13,19 +13,28 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-    const [user, setUser] = useState<User | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
+    const [user, setUser] = useState<User | null>(() => authService.getUser());
+    const [isLoading] = useState(false);
     const router = useRouter();
 
     useEffect(() => {
-        const storedUser = authService.getUser();
-        setUser(storedUser);
-        setIsLoading(false);
+        const syncUserFromStorage = () => {
+            setUser(authService.getUser());
+        };
+
+        syncUserFromStorage();
+        void authService.syncCurrentUser();
+        window.addEventListener(AUTH_STATE_CHANGED_EVENT, syncUserFromStorage);
+        window.addEventListener("storage", syncUserFromStorage);
+
+        return () => {
+            window.removeEventListener(AUTH_STATE_CHANGED_EVENT, syncUserFromStorage);
+            window.removeEventListener("storage", syncUserFromStorage);
+        };
     }, []);
 
     const logout = async () => {
         await authService.logout();
-        setUser(null);
         router.push("/login");
     };
 

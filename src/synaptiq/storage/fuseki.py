@@ -660,6 +660,28 @@ class FusekiStore:
                 cause=e,
             )
 
+    async def update(
+        self,
+        user_id: str,
+        sparql: str,
+    ) -> None:
+        """
+        Execute a SPARQL UPDATE scoped to a user's graph.
+        
+        Automatically injects graph URI and prefixes.
+        
+        Args:
+            user_id: User identifier
+            sparql: SPARQL UPDATE query
+        """
+        graph_uri = build_user_graph_uri(user_id)
+        
+        # Build full query with prefixes and graph scoping
+        # Replace WHERE clause to scope to user graph using WITH
+        full_sparql = f"{get_sparql_prefixes()}\nWITH <{graph_uri}>\n{sparql}"
+        
+        await self._execute_update(full_sparql)
+
     def _now_iso(self) -> str:
         """Get current timestamp in ISO format."""
         from datetime import datetime, timezone

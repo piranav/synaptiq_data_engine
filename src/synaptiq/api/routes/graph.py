@@ -662,6 +662,9 @@ async def get_concept_subgraph(
 )
 async def get_neighborhood(
     concept_label: Optional[str] = Query(None, description="Label of the concept (omit for root tree)"),
+    rel_types: Optional[str] = Query(None, description="Comma-separated relationship types to include (e.g. isA,partOf)"),
+    source_filter: Optional[str] = Query(None, description="Filter by source title (substring match)"),
+    min_importance: Optional[float] = Query(None, ge=0, description="Minimum importance score"),
     user_id: Optional[str] = Query(None, description="User ID (deprecated: use JWT)"),
     user: Optional[User] = Depends(get_current_user_optional),
     graph_manager: GraphManager = Depends(get_graph_manager),
@@ -671,6 +674,11 @@ async def get_neighborhood(
     
     If concept_label is provided: returns NeighborhoodResponse with concept details.
     If concept_label is omitted: returns JITTreeNode with full nested tree for Poincare disk.
+    
+    Supports filtering by:
+    - rel_types: comma-separated relationship types (isA, partOf, prerequisiteFor, relatedTo, oppositeOf, usedIn)
+    - source_filter: substring match on source title
+    - min_importance: minimum importance score for concepts
     """
     effective_user_id = user.id if user else user_id
     if not effective_user_id:
@@ -679,16 +687,27 @@ async def get_neighborhood(
             detail="Authentication required.",
         )
 
+    # Parse filter parameters
+    filters = {}
+    if rel_types:
+        filters["rel_types"] = [rt.strip() for rt in rel_types.split(",") if rt.strip()]
+    if source_filter:
+        filters["source_filter"] = source_filter
+    if min_importance is not None:
+        filters["min_importance"] = min_importance
+
     try:
         logger.info(
             "Fetching graph neighborhood",
             user_id=effective_user_id,
             concept_label=concept_label,
+            filters=filters,
         )
         
         data = await graph_manager.get_concept_neighborhood(
             user_id=effective_user_id,
-            concept_label=concept_label
+            concept_label=concept_label,
+            filters=filters if filters else None,
         )
         
         if not data:
@@ -780,4 +799,52 @@ async def export_graph(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Export failed: {str(e)}",
+        )
+
+
+# =============================================================================
+# CONSOLIDATION ENDPOINT
+# =============================================================================
+
+
+class ConsolidationResponse(BaseModel):
+    """Response from graph consolidation."""
+    
+    duplicates_merged: int = Field(default=0)
+    orphans_removed: int = Field(default=0)
+    weak_rels_removed: int = Field(default=0)
+
+
+@router.post(
+    "/consolidate",
+    response_model=ConsolidationResponse,
+    summary="Run graph consolidation",
+    description="Merge duplicates, remove orphans, and clean up weak relationships.",
+)
+async def consolidate_graph(
+    user: User = Depends(get_current_user),
+    graph_manager: GraphManager = Depends(get_graph_manager),
+) -> ConsolidationResponse:
+    """
+    Run post-ingestion consolidation on the user's knowledge graph.
+    
+    This merges duplicate concepts, removes orphans (no relationships,
+    single mention, no definition), and removes weak relatedTo edges
+    between low-importance concepts.
+    
+    Requires JWT authentication.
+    """
+    try:
+        from synaptiq.services.graph_consolidation import GraphConsolidationService
+        
+        service = GraphConsolidationService(fuseki_store=graph_manager.fuseki)
+        summary = await service.consolidate(user.id)
+        
+        return ConsolidationResponse(**summary)
+        
+    except Exception as e:
+        logger.error("Graph consolidation failed", user_id=user.id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Consolidation failed: {str(e)}",
         )

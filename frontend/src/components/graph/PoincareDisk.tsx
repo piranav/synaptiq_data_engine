@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, useId, useCallback } from "react";
-import { graphApi, GraphNeighborhood } from "@/lib/api/graph";
+import { graphApi, GraphNeighborhood, GraphFilters } from "@/lib/api/graph";
 import { transformToJITFormat, SWISS_COLORS } from "@/lib/graph/adapter";
 import { NodeInfo } from "@/components/graph/GraphSidebar";
+import { authService } from "@/lib/api/auth";
 
 // We need to tell TS about $jit on window if we import it
 declare global {
@@ -14,15 +15,16 @@ declare global {
 
 interface PoincareDiskProps {
     centerNode?: string | null;
-    userName?: string;  // For root node name
+    userName?: string;
     onNodeClick?: (nodeId: string, nodeLabel: string) => void;
     onCenterChange?: (centeredNode: NodeInfo | null, adjacentNodes: NodeInfo[]) => void;
-    onHypertreeReady?: (navigateToNode: (nodeId: string) => void) => void;  // Expose navigation
+    onHypertreeReady?: (navigateToNode: (nodeId: string) => void) => void;
     className?: string;
     isPreview?: boolean;
+    filters?: GraphFilters;
 }
 
-export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeClick, onCenterChange, onHypertreeReady, className, isPreview = false }: PoincareDiskProps) {
+export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeClick, onCenterChange, onHypertreeReady, className, isPreview = false, filters }: PoincareDiskProps) {
     const uniqueId = useId();
     // Remove colons and create a clean ID (no spaces - invalid in HTML IDs)
     const containerId = useRef(`infovis-${uniqueId.replace(/:/g, "")}`);
@@ -59,6 +61,11 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
         }
 
         try {
+            // Check authentication before API call
+            const tokens = authService.getUser();
+            if (!tokens) {
+                return null;
+            }
             setLoading(true);
             const data = await graphApi.getNeighborhood(conceptLabel);
             if (data) {
@@ -66,7 +73,10 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
             }
             return data;
         } catch (err) {
-            console.error("Failed to fetch neighborhood:", err);
+            // Only log non-auth errors
+            if (!(err instanceof Error && (err.message.includes("token") || err.message.includes("Authentication")))) {
+                console.error("Failed to fetch neighborhood:", err);
+            }
             return null;
         } finally {
             setLoading(false);
@@ -117,14 +127,21 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
         if (previousCenter === '__root__') {
             // Go back to root - reload the JIT tree
             try {
-                const jitTree = await graphApi.getJITTree();
+                const tokens = authService.getUser();
+                if (!tokens) {
+                    return; // Skip if not authenticated
+                }
+                const jitTree = await graphApi.getJITTree(filters);
                 if (jitTree && htRef.current) {
                     htRef.current.loadJSON(jitTree);
                     htRef.current.refresh();
                     htRef.current.controller.onComplete();
                 }
             } catch (err) {
-                console.error("Failed to reload root tree:", err);
+                // Only log non-auth errors
+                if (!(err instanceof Error && (err.message.includes("token") || err.message.includes("Authentication")))) {
+                    console.error("Failed to reload root tree:", err);
+                }
             }
             setCurrentCenter(null);
         } else {
@@ -185,10 +202,17 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                     const displayName = toPascalCase(node.name);
 
                     let labelHtml = '';
+                    const childCount = node.data?.childCount;
+                    
                     if (relLabel && node._depth > 0) {
                         labelHtml = `<span class="node-label">${displayName}</span><span class="rel-type">${relLabel}</span>`;
                     } else {
                         labelHtml = displayName;
+                    }
+
+                    // Show child count badge for parent-level concepts
+                    if (childCount && node._depth === 1) {
+                        labelHtml += `<span class="child-count">${childCount}</span>`;
                     }
 
                     // Add visual drill hint for child nodes
@@ -242,6 +266,19 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                         drillHint.style.marginLeft = '4px';
                         drillHint.style.fontSize = '10px';
                         drillHint.style.color = 'rgba(10, 132, 255, 0.8)';
+                    }
+                    
+                    // Style the child count badge
+                    const childCountEl = domElement.querySelector('.child-count') as HTMLElement;
+                    if (childCountEl) {
+                        childCountEl.style.display = 'inline-block';
+                        childCountEl.style.marginLeft = '6px';
+                        childCountEl.style.fontSize = '9px';
+                        childCountEl.style.fontWeight = '600';
+                        childCountEl.style.color = 'rgba(255,255,255,0.7)';
+                        childCountEl.style.backgroundColor = 'rgba(255,255,255,0.15)';
+                        childCountEl.style.padding = '1px 5px';
+                        childCountEl.style.borderRadius = '8px';
                     }
 
                     if (node._depth <= 1) {
@@ -317,9 +354,30 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
 
             // Load initial data - backend now returns JIT-compatible tree structure directly
             try {
+                // Check if user is authenticated before making API call
+                const tokens = authService.getUser();
+                if (!tokens) {
+                    // User not authenticated, show empty state
+                    const emptyState = {
+                        id: 'empty',
+                        name: 'No Data',
+                        data: { $color: '#4B5563', $dim: 20 },
+                        children: [{
+                            id: 'hint',
+                            name: 'Please log in to view your graph',
+                            data: { $color: '#6B7280', $dim: 10 },
+                            children: []
+                        }]
+                    };
+                    ht.loadJSON(emptyState);
+                    ht.refresh();
+                    ht.controller.onComplete();
+                    return;
+                }
+
                 setLoading(true);
-                // Fetch the JIT-compatible tree directly
-                const jitTree = await graphApi.getJITTree();
+                // Fetch the JIT-compatible tree directly (with any active filters)
+                const jitTree = await graphApi.getJITTree(filters);
                 console.log("JIT Tree loaded:", jitTree);
 
                 if (jitTree && jitTree.id && jitTree.children) {
@@ -330,25 +388,6 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
 
                     // Tree is already in JIT format, load directly
                     ht.loadJSON(jitTree);
-
-                    // Apply cross-node adjacencies if present
-                    // This connects siblings/cousins that represent the same concept
-                    if (jitTree.adjacencies && Array.isArray(jitTree.adjacencies)) {
-                        console.log(`Applying ${jitTree.adjacencies.length} cross-node adjacencies`);
-                        for (const adj of jitTree.adjacencies) {
-                            try {
-                                ht.graph.addAdjacence(
-                                    { id: adj.nodeFrom },
-                                    { id: adj.nodeTo },
-                                    adj.data || {}
-                                );
-                            } catch (e) {
-                                // Node might not exist, skip
-                                console.debug(`Skipped adjacency ${adj.nodeFrom} -> ${adj.nodeTo}`);
-                            }
-                        }
-                    }
-
                     ht.refresh();
                     ht.controller.onComplete();
                 } else {
@@ -379,15 +418,33 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                     }
                 }
             } catch (err) {
-                console.error("Failed to load graph data:", err);
-                const emptyState = {
-                    id: 'empty',
-                    name: 'Error loading graph',
-                    data: { $color: '#EF4444', $dim: 20 },
-                    children: []
-                };
-                ht.loadJSON(emptyState);
-                ht.refresh();
+                // Handle auth errors gracefully
+                if (err instanceof Error && (err.message.includes("token") || err.message.includes("Authentication"))) {
+                    console.debug("Graph initialization skipped - authentication required");
+                    const emptyState = {
+                        id: 'empty',
+                        name: 'No Data',
+                        data: { $color: '#4B5563', $dim: 20 },
+                        children: [{
+                            id: 'hint',
+                            name: 'Please log in to view your graph',
+                            data: { $color: '#6B7280', $dim: 10 },
+                            children: []
+                        }]
+                    };
+                    ht.loadJSON(emptyState);
+                    ht.refresh();
+                } else {
+                    console.error("Failed to load graph data:", err);
+                    const emptyState = {
+                        id: 'empty',
+                        name: 'Error loading graph',
+                        data: { $color: '#EF4444', $dim: 20 },
+                        children: []
+                    };
+                    ht.loadJSON(emptyState);
+                    ht.refresh();
+                }
             } finally {
                 setLoading(false);
             }
@@ -406,7 +463,7 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                 htRef.current = null;
             }
         };
-    }, [jitLoaded, fetchNeighborhood, currentCenter, handleNodeClick]);
+    }, [jitLoaded, fetchNeighborhood, currentCenter, handleNodeClick, filters]);
 
     return (
         <div className={`relative w-full h-full bg-[#1C1C1E] overflow-hidden ${className || ''}`}>

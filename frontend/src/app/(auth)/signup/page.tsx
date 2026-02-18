@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { SocialAuthButtons } from "@/components/auth/SocialAuthButtons";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { authService } from "@/lib/api/auth";
@@ -12,6 +14,7 @@ export default function SignupPage() {
     const [password, setPassword] = useState("");
     const [name, setName] = useState("");
     const [error, setError] = useState<string | null>(null);
+    const router = useRouter();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -19,11 +22,12 @@ export default function SignupPage() {
         setError(null);
 
         try {
-            const response = await authService.signup({ name, email, password });
-            console.log("Signed up:", response);
-            window.location.href = "/home";
-        } catch (err: any) {
-            setError(err.message || "Something went wrong. Please try again.");
+            await authService.signup({ name, email, password });
+            router.replace("/home");
+        } catch (err: unknown) {
+            const message =
+                err instanceof Error ? err.message : "Something went wrong. Please try again.";
+            setError(message);
         } finally {
             setIsLoading(false);
         }
@@ -81,7 +85,7 @@ export default function SignupPage() {
                     type="submit"
                     size="lg"
                     isLoading={isLoading}
-                    className="w-full mt-2"
+                    className="mt-2 w-full bg-gradient-to-r from-accent to-[#4f8cff] shadow-[0_10px_28px_rgba(37,107,238,0.35)] hover:from-[#2a74ff] hover:to-[#6ca1ff]"
                 >
                     Create Account
                 </Button>
@@ -93,14 +97,11 @@ export default function SignupPage() {
                 <div className="h-px flex-1 bg-border-subtle" />
             </div>
 
-            <div className="mt-6 grid grid-cols-2 gap-4">
-                <Button variant="secondary" onClick={() => console.log("Google auth")}>
-                    Google
-                </Button>
-                <Button variant="secondary" onClick={() => console.log("Github auth")}>
-                    GitHub
-                </Button>
-            </div>
+            <SocialAuthButtons
+                mode="signup"
+                onSuccess={() => router.replace("/home")}
+                onError={setError}
+            />
 
             <p className="mt-8 text-center text-callout text-secondary">
                 Already have an account?{" "}
@@ -111,4 +112,3 @@ export default function SignupPage() {
         </>
     );
 }
-

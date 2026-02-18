@@ -4,19 +4,28 @@ Authentication API routes.
 Provides endpoints for:
 - User registration (signup)
 - Login and token generation
+- Social OAuth (Google, GitHub)
 - Token refresh
 - Logout
 - Password reset
 - Current user info
 """
 
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+import json
+from typing import Any, Literal, Optional
+from urllib.parse import urlencode
+from uuid import uuid4
 
+import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field, field_validator, EmailStr
+from fastapi.responses import HTMLResponse, RedirectResponse
+from jose import JWTError, jwt
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config.settings import get_settings
 from synaptiq.infrastructure.database import get_async_session
 from synaptiq.services.auth_service import AuthError, AuthService
 from synaptiq.workers.tasks import onboard_user_task
@@ -138,6 +147,375 @@ def user_to_response(user) -> UserResponse:
     )
 
 
+OAuthProvider = Literal["google", "github"]
+OAuthMode = Literal["login", "signup"]
+
+
+def _validate_oauth_provider(provider: str) -> OAuthProvider:
+    """Validate provider path param and normalize casing."""
+    normalized = provider.lower().strip()
+    if normalized not in {"google", "github"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Unsupported OAuth provider",
+                "code": "unsupported_provider",
+            },
+        )
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_origin(value: str) -> str:
+    """Normalize origin strings for strict equality checks."""
+    return value.rstrip("/")
+
+
+def _resolve_frontend_origin(origin: Optional[str]) -> str:
+    """
+    Resolve and validate frontend origin for OAuth popup communication.
+
+    We intentionally enforce a strict allowlist to prevent open redirects
+    and postMessage target-origin abuse.
+    """
+    settings = get_settings()
+    allowed_origin = _normalize_origin(settings.frontend_origin)
+    requested_origin = _normalize_origin(origin) if origin else allowed_origin
+
+    if requested_origin != allowed_origin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Invalid OAuth origin",
+                "code": "invalid_oauth_origin",
+            },
+        )
+
+    return requested_origin
+
+
+def _oauth_provider_config(provider: OAuthProvider) -> dict[str, str]:
+    """Get OAuth endpoint and credential configuration for a provider."""
+    settings = get_settings()
+
+    if provider == "google":
+        return {
+            "client_id": settings.google_oauth_client_id or "",
+            "client_secret": settings.google_oauth_client_secret or "",
+            "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_url": "https://oauth2.googleapis.com/token",
+            "userinfo_url": "https://openidconnect.googleapis.com/v1/userinfo",
+            "scope": "openid email profile",
+        }
+
+    if provider == "github":
+        return {
+            "client_id": settings.github_oauth_client_id or "",
+            "client_secret": settings.github_oauth_client_secret or "",
+            "authorize_url": "https://github.com/login/oauth/authorize",
+            "token_url": "https://github.com/login/oauth/access_token",
+            "userinfo_url": "https://api.github.com/user",
+            "emails_url": "https://api.github.com/user/emails",
+            "scope": "read:user user:email",
+        }
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"message": "Unsupported OAuth provider", "code": "unsupported_provider"},
+    )
+
+
+def _build_oauth_callback_url(request: Request, provider: OAuthProvider) -> str:
+    """Build the OAuth callback URL, optionally using a public backend base URL."""
+    settings = get_settings()
+    callback_path = f"/api/v1/auth/oauth/{provider}/callback"
+
+    if settings.oauth_backend_base_url:
+        return f"{settings.oauth_backend_base_url.rstrip('/')}{callback_path}"
+
+    return str(request.url_for("oauth_callback", provider=provider))
+
+
+def _build_oauth_state(provider: OAuthProvider, mode: OAuthMode, origin: str) -> str:
+    """Create a short-lived signed OAuth state token for CSRF protection."""
+    settings = get_settings()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+    payload = {
+        "type": "oauth_state",
+        "provider": provider,
+        "mode": mode,
+        "origin": origin,
+        "nonce": str(uuid4()),
+        "iat": datetime.now(timezone.utc),
+        "exp": expires_at,
+    }
+
+    return jwt.encode(
+        payload,
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+
+
+def _decode_oauth_state(state_token: str, expected_provider: OAuthProvider) -> dict[str, Any]:
+    """Validate and decode OAuth state token."""
+    settings = get_settings()
+
+    try:
+        payload = jwt.decode(
+            state_token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+        )
+    except JWTError as exc:
+        raise ValueError("invalid_state_token") from exc
+
+    if payload.get("type") != "oauth_state":
+        raise ValueError("invalid_state_type")
+    if payload.get("provider") != expected_provider:
+        raise ValueError("state_provider_mismatch")
+
+    mode = payload.get("mode")
+    if mode not in {"login", "signup"}:
+        raise ValueError("invalid_state_mode")
+
+    origin = payload.get("origin")
+    if not origin or _normalize_origin(origin) != _normalize_origin(settings.frontend_origin):
+        raise ValueError("invalid_state_origin")
+
+    return payload
+
+
+def _json_for_script(value: Any) -> str:
+    """Serialize JSON safely for embedding in inline script blocks."""
+    return json.dumps(value).replace("</", "<\\/")
+
+
+def _oauth_popup_response(
+    *,
+    origin: str,
+    fallback_path: str,
+    payload: Optional[dict[str, Any]] = None,
+    error: Optional[dict[str, str]] = None,
+) -> HTMLResponse:
+    """
+    Return an HTML page for OAuth popup completion.
+
+    The page posts a message to the opener window and closes itself.
+    If no opener exists, it redirects to the frontend auth page.
+    """
+    message: dict[str, Any] = {
+        "type": "synaptiq_oauth_result",
+        "status": "error" if error else "success",
+    }
+    if payload:
+        message["payload"] = payload
+    if error:
+        message["error"] = error
+
+    html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Synaptiq OAuth</title>
+  </head>
+  <body>
+    <script>
+      (function() {{
+        var targetOrigin = {_json_for_script(origin)};
+        var message = {_json_for_script(message)};
+
+        try {{
+          if (window.opener && !window.opener.closed) {{
+            window.opener.postMessage(message, targetOrigin);
+            window.close();
+            return;
+          }}
+        }} catch (e) {{
+          // Fall through to redirect.
+        }}
+
+        var redirectUrl = new URL({_json_for_script(fallback_path)}, targetOrigin);
+        if (message.status === "error" && message.error && message.error.code) {{
+          redirectUrl.searchParams.set("oauth_error", message.error.code);
+        }} else {{
+          redirectUrl.searchParams.set("oauth", "success");
+        }}
+        window.location.replace(redirectUrl.toString());
+      }})();
+    </script>
+  </body>
+</html>
+"""
+
+    return HTMLResponse(content=html)
+
+
+def _oauth_fallback_path(mode: OAuthMode) -> str:
+    """Map OAuth flow mode to the corresponding frontend page."""
+    return "/signup" if mode == "signup" else "/login"
+
+
+def _ensure_oauth_provider_configured(provider: OAuthProvider) -> dict[str, str]:
+    """Ensure OAuth client credentials are configured."""
+    config = _oauth_provider_config(provider)
+    if not config.get("client_id") or not config.get("client_secret"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "message": f"{provider.title()} OAuth is not configured on the server",
+                "code": "oauth_not_configured",
+            },
+        )
+    return config
+
+
+def _pick_verified_github_email(email_rows: list[dict[str, Any]]) -> Optional[str]:
+    """Pick the best verified email from GitHub email rows."""
+    verified_rows = [row for row in email_rows if row.get("verified")]
+    if not verified_rows:
+        return None
+
+    primary_verified = next((row for row in verified_rows if row.get("primary")), None)
+    selected = primary_verified or verified_rows[0]
+    email = selected.get("email")
+    return email.lower().strip() if isinstance(email, str) and email.strip() else None
+
+
+async def _fetch_google_identity(
+    *,
+    code: str,
+    redirect_uri: str,
+    config: dict[str, str],
+) -> dict[str, Optional[str]]:
+    """Exchange Google code and return normalized identity profile."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        token_res = await client.post(
+            config["token_url"],
+            data={
+                "code": code,
+                "client_id": config["client_id"],
+                "client_secret": config["client_secret"],
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+        if token_res.status_code >= 400:
+            raise AuthError("Google OAuth token exchange failed", code="oauth_token_exchange_failed")
+
+        token_data = token_res.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            raise AuthError("Google OAuth did not return an access token", code="oauth_token_missing")
+
+        profile_res = await client.get(
+            config["userinfo_url"],
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if profile_res.status_code >= 400:
+            raise AuthError("Failed to fetch Google user profile", code="oauth_profile_fetch_failed")
+
+        profile = profile_res.json()
+
+    email = profile.get("email")
+    email_verified = bool(profile.get("email_verified"))
+    oauth_id = profile.get("sub")
+
+    if not email or not email_verified or not oauth_id:
+        raise AuthError(
+            "Google account must have a verified email address",
+            code="oauth_email_not_verified",
+        )
+
+    return {
+        "oauth_id": str(oauth_id),
+        "email": str(email).lower().strip(),
+        "name": profile.get("name"),
+        "avatar_url": profile.get("picture"),
+    }
+
+
+async def _fetch_github_identity(
+    *,
+    code: str,
+    redirect_uri: str,
+    config: dict[str, str],
+) -> dict[str, Optional[str]]:
+    """Exchange GitHub code and return normalized identity profile."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        token_res = await client.post(
+            config["token_url"],
+            headers={"Accept": "application/json"},
+            data={
+                "code": code,
+                "client_id": config["client_id"],
+                "client_secret": config["client_secret"],
+                "redirect_uri": redirect_uri,
+            },
+        )
+        if token_res.status_code >= 400:
+            raise AuthError("GitHub OAuth token exchange failed", code="oauth_token_exchange_failed")
+
+        token_data = token_res.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            raise AuthError("GitHub OAuth did not return an access token", code="oauth_token_missing")
+
+        base_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        user_res = await client.get(config["userinfo_url"], headers=base_headers)
+        if user_res.status_code >= 400:
+            raise AuthError("Failed to fetch GitHub user profile", code="oauth_profile_fetch_failed")
+
+        user_data = user_res.json()
+        oauth_id = user_data.get("id")
+        if oauth_id is None:
+            raise AuthError("GitHub profile missing user identifier", code="oauth_profile_invalid")
+
+        email = user_data.get("email")
+        normalized_email: Optional[str] = None
+        if isinstance(email, str) and email.strip():
+            normalized_email = email.lower().strip()
+        else:
+            emails_res = await client.get(config["emails_url"], headers=base_headers)
+            if emails_res.status_code >= 400:
+                raise AuthError("Unable to fetch GitHub email addresses", code="oauth_profile_invalid")
+            email_rows = emails_res.json()
+            if not isinstance(email_rows, list):
+                raise AuthError("Invalid GitHub email response", code="oauth_profile_invalid")
+            normalized_email = _pick_verified_github_email(email_rows)
+
+        if not normalized_email:
+            raise AuthError(
+                "GitHub account must have a verified email address",
+                code="oauth_email_not_verified",
+            )
+
+        return {
+            "oauth_id": str(oauth_id),
+            "email": normalized_email,
+            "name": user_data.get("name") or user_data.get("login"),
+            "avatar_url": user_data.get("avatar_url"),
+        }
+
+
+async def _fetch_oauth_identity(
+    *,
+    provider: OAuthProvider,
+    code: str,
+    redirect_uri: str,
+    config: dict[str, str],
+) -> dict[str, Optional[str]]:
+    """Fetch normalized OAuth identity profile for the given provider."""
+    if provider == "google":
+        return await _fetch_google_identity(code=code, redirect_uri=redirect_uri, config=config)
+    return await _fetch_github_identity(code=code, redirect_uri=redirect_uri, config=config)
+
+
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -234,6 +612,204 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"message": e.message, "code": e.code},
         )
+
+
+@router.get(
+    "/oauth/{provider}/start",
+    summary="Start OAuth login/signup flow",
+    responses={
+        302: {"description": "Redirects to provider authorization page"},
+        400: {"description": "Invalid provider or origin"},
+        503: {"description": "OAuth provider not configured"},
+    },
+)
+async def oauth_start(
+    provider: str,
+    request: Request,
+    mode: OAuthMode = "login",
+    origin: Optional[str] = None,
+):
+    """
+    Start an OAuth flow with Google or GitHub.
+
+    Returns a redirect response to the provider's authorization page.
+    """
+    provider_name = _validate_oauth_provider(provider)
+    resolved_origin = _resolve_frontend_origin(origin)
+    config = _ensure_oauth_provider_configured(provider_name)
+    callback_url = _build_oauth_callback_url(request, provider_name)
+    state_token = _build_oauth_state(provider_name, mode, resolved_origin)
+
+    params: dict[str, str] = {
+        "client_id": config["client_id"],
+        "redirect_uri": callback_url,
+        "response_type": "code",
+        "scope": config["scope"],
+        "state": state_token,
+    }
+    if provider_name == "google":
+        params["access_type"] = "online"
+        params["prompt"] = "select_account"
+    else:
+        params["allow_signup"] = "true"
+
+    authorization_url = f"{config['authorize_url']}?{urlencode(params)}"
+    return RedirectResponse(url=authorization_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get(
+    "/oauth/{provider}/callback",
+    include_in_schema=False,
+    name="oauth_callback",
+)
+async def oauth_callback(
+    provider: str,
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """
+    OAuth callback handler for Google/GitHub popup flow.
+
+    The response is an HTML page that posts auth data to the opener window.
+    """
+    provider_name = _validate_oauth_provider(provider)
+    origin = _normalize_origin(get_settings().frontend_origin)
+    mode: OAuthMode = "login"
+    fallback_path = _oauth_fallback_path(mode)
+
+    if not state:
+        return _oauth_popup_response(
+            origin=origin,
+            fallback_path=fallback_path,
+            error={"message": "Missing OAuth state", "code": "missing_oauth_state"},
+        )
+
+    try:
+        state_payload = _decode_oauth_state(state, provider_name)
+        origin = _normalize_origin(state_payload["origin"])
+        mode = state_payload["mode"]
+        fallback_path = _oauth_fallback_path(mode)
+    except ValueError as exc:
+        logger.warning(
+            "OAuth callback rejected due to invalid state",
+            provider=provider_name,
+            error=str(exc),
+        )
+        return _oauth_popup_response(
+            origin=origin,
+            fallback_path=fallback_path,
+            error={"message": "Invalid OAuth state", "code": "invalid_oauth_state"},
+        )
+
+    if error:
+        logger.warning(
+            "OAuth provider returned error",
+            provider=provider_name,
+            oauth_error=error,
+            description=error_description,
+        )
+        return _oauth_popup_response(
+            origin=origin,
+            fallback_path=fallback_path,
+            error={
+                "message": error_description or "OAuth provider authentication failed",
+                "code": "oauth_provider_error",
+            },
+        )
+
+    if not code:
+        return _oauth_popup_response(
+            origin=origin,
+            fallback_path=fallback_path,
+            error={"message": "Missing OAuth authorization code", "code": "missing_oauth_code"},
+        )
+
+    try:
+        config = _ensure_oauth_provider_configured(provider_name)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        return _oauth_popup_response(
+            origin=origin,
+            fallback_path=fallback_path,
+            error={
+                "message": detail.get("message", "OAuth provider is not configured"),
+                "code": detail.get("code", "oauth_not_configured"),
+            },
+        )
+
+    callback_url = _build_oauth_callback_url(request, provider_name)
+    try:
+        identity = await _fetch_oauth_identity(
+            provider=provider_name,
+            code=code,
+            redirect_uri=callback_url,
+            config=config,
+        )
+    except AuthError as exc:
+        logger.warning(
+            "OAuth profile retrieval failed",
+            provider=provider_name,
+            error=exc.code,
+        )
+        return _oauth_popup_response(
+            origin=origin,
+            fallback_path=fallback_path,
+            error={"message": exc.message, "code": exc.code},
+        )
+    except Exception:
+        logger.exception("Unexpected OAuth profile retrieval error", provider=provider_name)
+        return _oauth_popup_response(
+            origin=origin,
+            fallback_path=fallback_path,
+            error={
+                "message": "OAuth authentication failed unexpectedly",
+                "code": "oauth_unexpected_error",
+            },
+        )
+
+    user_agent, ip_address = get_client_info(request)
+    auth_service = AuthService(session)
+
+    try:
+        user, token_pair, is_new_user = await auth_service.login_with_oauth(
+            provider=provider_name,
+            oauth_id=identity["oauth_id"] or "",
+            email=identity["email"] or "",
+            name=identity.get("name"),
+            avatar_url=identity.get("avatar_url"),
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
+    except AuthError as exc:
+        logger.warning(
+            "OAuth login failed",
+            provider=provider_name,
+            error=exc.code,
+        )
+        return _oauth_popup_response(
+            origin=origin,
+            fallback_path=fallback_path,
+            error={"message": exc.message, "code": exc.code},
+        )
+
+    if is_new_user:
+        onboard_user_task.delay(user.id)
+        logger.info("Triggered graph provisioning for OAuth user", user_id=user.id)
+
+    auth_payload = {
+        "user": user_to_response(user).model_dump(),
+        "tokens": TokenResponse(**token_pair.to_dict()).model_dump(),
+    }
+
+    return _oauth_popup_response(
+        origin=origin,
+        fallback_path=fallback_path,
+        payload=auth_payload,
+    )
 
 
 @router.post(
@@ -396,4 +972,3 @@ async def get_current_user_info(
         )
     
     return user_to_response(user)
-

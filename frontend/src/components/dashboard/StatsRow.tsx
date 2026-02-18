@@ -1,113 +1,79 @@
 "use client";
 
-import { useAuth } from "@/contexts/AuthContext";
-import { dashboardService } from "@/lib/api/dashboard";
-import { BrainCircuit, Link2, Library, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { BrainCircuit, Link2, Library, TrendingUp } from "lucide-react";
+import type { DashboardStats } from "@/lib/api/dashboard";
+import clsx from "clsx";
+import { IconFrame } from "@/components/ui/IconFrame";
 
-interface StatsData {
-    concepts_count: number;
-    sources_count: number;
-    relationships_count: number;  // Connections between concepts
+interface StatsRowProps {
+    stats?: DashboardStats | null;
+    loading?: boolean;
 }
 
-export function StatsRow() {
-    const { user } = useAuth();
-    const [stats, setStats] = useState<StatsData | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(false);
-
-    useEffect(() => {
-        if (!user) return;
-
-        const fetchStats = async () => {
-            try {
-                const data = await dashboardService.getStats();
-                if (data) {
-                    setStats(data);
-                    setError(false);
-                } else {
-                    console.warn("Stats data is null (likely 401)");
-                    setStats(null);
-                }
-            } catch (err) {
-                console.error("Failed to fetch stats for StatsRow", err);
-                setError(true);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchStats();
-    }, [user]);
-
+export function StatsRow({ stats, loading = false }: StatsRowProps) {
+    const growth = stats?.growth_percent ?? null;
     const items = [
         {
-            label: "Total Concepts",
+            label: "Concepts",
             value: stats?.concepts_count ?? 0,
             icon: BrainCircuit,
-            color: "text-[#60a5fa]",
-            bg: "bg-[#60a5fa]/10",
-            trend: null,
-            trendColor: null
+            tone: "concept" as const,
+            caption: "Total indexed concepts",
         },
         {
             label: "Connections",
             value: stats?.relationships_count ?? 0,
             icon: Link2,
-            color: "text-[#a78bfa]",
-            bg: "bg-[#a78bfa]/10",
-            trend: null,
-            trendColor: null
+            tone: "relation" as const,
+            caption: "Graph relationships",
         },
         {
             label: "Sources",
             value: stats?.sources_count ?? 0,
             icon: Library,
-            color: "text-[#34d399]",
-            bg: "bg-[#34d399]/10",
-            trend: null,
-            trendColor: null
-        }
+            tone: "source" as const,
+            caption: "Ingested sources",
+        },
+        {
+            label: "Weekly Growth",
+            value: growth === null ? "N/A" : `${growth > 0 ? "+" : ""}${growth.toFixed(1)}%`,
+            icon: TrendingUp,
+            tone: growth !== null && growth < 0 ? "danger" as const : "accent" as const,
+            caption: growth === null ? "Need 7 days of history" : "Concept growth vs last week",
+        },
     ];
 
     if (loading) {
         return (
-            <div className="grid grid-cols-3 gap-6 mb-10">
-                {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-32 rounded-2xl bg-white/[0.02] border border-white/10 animate-pulse" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-5">
+                {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-36 rounded-[24px] bg-surface border border-border animate-pulse" />
                 ))}
             </div>
         );
     }
 
-    if (error) {
-        return null;
-    }
-
     return (
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-5">
             {items.map((item, index) => {
-                const Icon = item.icon;
                 return (
-                    <div key={index} className="bg-white/[0.02] rounded-2xl p-5 border border-white/10 flex flex-col justify-between h-32 hover:border-white/20 hover:bg-white/[0.04] transition-all cursor-default">
-                        <div className="flex justify-between items-start">
-                            <div className={`p-2 rounded-lg ${item.bg} ${item.color}`}>
-                                <Icon className="w-[18px] h-[18px]" />
-                            </div>
-                            {item.trend && (
-                                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${item.trendColor}`}>
-                                    {item.trend}
-                                </span>
-                            )}
+                    <div key={index} className="dashboard-card rounded-[24px] p-5 flex flex-col justify-between min-h-[146px] hover:shadow-hover transition-all">
+                        <div className="flex justify-between items-start mb-5">
+                            <IconFrame icon={item.icon} tone={item.tone} size="sm" />
+                            <span className="text-[10px] uppercase tracking-[0.14em] text-tertiary font-semibold">Live</span>
                         </div>
                         <div>
-                            <div className="text-2xl font-semibold tracking-tight text-white">
-                                {item.value.toLocaleString()}
+                            <div className={clsx(
+                                "text-[32px] leading-[1] font-semibold tracking-tight text-primary",
+                                item.label === "Weekly Growth" && growth !== null && growth > 0 && "text-accent",
+                                item.label === "Weekly Growth" && growth !== null && growth < 0 && "text-danger"
+                            )}>
+                                {typeof item.value === "number" ? item.value.toLocaleString() : item.value}
                             </div>
-                            <div className="text-xs text-white/60 mt-1 font-medium">
+                            <div className="text-[11px] text-secondary mt-2 font-semibold uppercase tracking-[0.14em]">
                                 {item.label}
                             </div>
+                            <p className="text-xs text-secondary mt-1">{item.caption}</p>
                         </div>
                     </div>
                 );

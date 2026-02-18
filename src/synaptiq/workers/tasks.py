@@ -8,6 +8,7 @@ from typing import Optional
 import structlog
 from celery import shared_task
 
+from config.settings import get_settings
 from synaptiq.adapters.base import AdapterFactory, normalize_url
 from synaptiq.core.exceptions import AdapterError, ProcessingError, StorageError
 from synaptiq.core.schemas import Job, JobStatus, SourceType
@@ -19,6 +20,10 @@ from synaptiq.ontology.graph_manager import GraphManager
 
 logger = structlog.get_logger(__name__)
 
+_CONSOLIDATION_DEBOUNCE_SECONDS = 120
+_CONSOLIDATION_DELAY_SECONDS = 20
+_CONSOLIDATION_DEBOUNCE_KEY_PREFIX = "synaptiq:graph:consolidation"
+
 
 def run_async(coro):
     """Run an async function in a sync context."""
@@ -28,6 +33,58 @@ def run_async(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+async def _enqueue_graph_consolidation(user_id: str) -> None:
+    """
+    Queue graph consolidation with Redis-based debounce.
+
+    Debounce avoids running a consolidation for every single ingestion task in a burst.
+    """
+    should_enqueue = True
+    redis_client = None
+    try:
+        import redis.asyncio as redis_async
+
+        settings = get_settings()
+        redis_client = redis_async.from_url(settings.redis_url, decode_responses=True)
+        debounce_key = f"{_CONSOLIDATION_DEBOUNCE_KEY_PREFIX}:{user_id}"
+        acquired = await redis_client.set(
+            debounce_key,
+            "1",
+            ex=_CONSOLIDATION_DEBOUNCE_SECONDS,
+            nx=True,
+        )
+        should_enqueue = bool(acquired)
+        if not should_enqueue:
+            logger.debug(
+                "Graph consolidation already scheduled (debounced)",
+                user_id=user_id,
+            )
+    except Exception as e:
+        # If Redis debounce fails, still schedule consolidation to avoid stale graphs.
+        logger.warning(
+            "Consolidation debounce failed; proceeding without debounce",
+            user_id=user_id,
+            error=str(e),
+        )
+    finally:
+        if redis_client:
+            try:
+                await redis_client.close()
+            except Exception:
+                pass
+
+    if should_enqueue:
+        consolidate_graph_task.apply_async(
+            kwargs={"user_id": user_id},
+            countdown=_CONSOLIDATION_DELAY_SECONDS,
+        )
+        logger.info(
+            "Queued graph consolidation task",
+            user_id=user_id,
+            delay_seconds=_CONSOLIDATION_DELAY_SECONDS,
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -328,6 +385,8 @@ async def _ingest_url_async(
             chunk_count=chunk_count,
             ontology_enabled=enable_ontology,
         )
+        if enable_ontology:
+            await _enqueue_graph_consolidation(user_id)
 
         return {
             "status": "completed",
@@ -502,6 +561,8 @@ async def _ingest_note_async(
             document_id=document.id,
             chunk_count=chunk_count,
         )
+        if enable_ontology:
+            await _enqueue_graph_consolidation(user_id)
 
         return {
             "status": "completed",
@@ -669,6 +730,8 @@ async def _ingest_file_async(
             chunk_count=chunk_count,
             filename=filename,
         )
+        if enable_ontology:
+            await _enqueue_graph_consolidation(user_id)
 
         return {
             "status": "completed",
@@ -696,6 +759,44 @@ async def _ingest_file_async(
 # ═══════════════════════════════════════════════════════════════════════════════
 # GRAPH TASKS
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@shared_task(
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_jitter=True,
+    max_retries=3,
+)
+def consolidate_graph_task(self, user_id: str) -> dict:
+    """Run post-ingestion graph consolidation for a user."""
+    return run_async(_consolidate_graph_async(user_id))
+
+
+async def _consolidate_graph_async(user_id: str) -> dict:
+    """Async implementation of graph consolidation."""
+    from synaptiq.services.graph_consolidation import GraphConsolidationService
+
+    fuseki = FusekiStore()
+    try:
+        logger.info("Running graph consolidation task", user_id=user_id)
+        service = GraphConsolidationService(fuseki_store=fuseki)
+        summary = await service.consolidate(user_id)
+        return {
+            "status": "completed",
+            "user_id": user_id,
+            "summary": summary,
+        }
+    except Exception as e:
+        logger.error("Graph consolidation task failed", user_id=user_id, error=str(e))
+        return {
+            "status": "failed",
+            "user_id": user_id,
+            "error": str(e),
+        }
+    finally:
+        await fuseki.close()
+
 
 @shared_task
 def export_user_graph_task(user_id: str, format: str = "turtle") -> dict:
@@ -1038,6 +1139,7 @@ async def _extract_knowledge_async(
             artifacts=result.get("artifacts", 0),
             concepts=len(result.get("concepts", [])),
         )
+        await _enqueue_graph_consolidation(user_id)
         
         return {
             "status": "completed",

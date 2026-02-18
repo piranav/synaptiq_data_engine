@@ -3,37 +3,55 @@
 import { useEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
 
-// Initialize mermaid with dark theme
-mermaid.initialize({
-    startOnLoad: false,
-    theme: "dark",
-    themeVariables: {
-        primaryColor: "#256BEE",
-        primaryTextColor: "#fff",
-        primaryBorderColor: "#60a5fa",
-        lineColor: "#60a5fa",
-        secondaryColor: "#1a1d24",
-        tertiaryColor: "#0B0D12",
-        background: "#0B0D12",
-        mainBkg: "#1a1d24",
-        nodeBorder: "#60a5fa",
-        clusterBkg: "#1a1d24",
-        clusterBorder: "#60a5fa",
-        titleColor: "#fff",
-        edgeLabelBackground: "#1a1d24",
-    },
-    flowchart: {
-        htmlLabels: true,
-        curve: "basis",
-    },
-});
-
 interface MermaidRendererProps {
     code: string;
     className?: string;
+    theme?: "light" | "dark";
 }
 
-export function MermaidRenderer({ code, className = "" }: MermaidRendererProps) {
+function getThemeConfig(theme: "light" | "dark") {
+    if (theme === "light") {
+        return {
+            theme: "default" as const,
+            themeVariables: {
+                primaryColor: "#256BEE",
+                primaryTextColor: "#0f172a",
+                primaryBorderColor: "#256BEE",
+                lineColor: "#256BEE",
+                secondaryColor: "#f6f8fb",
+                tertiaryColor: "#ffffff",
+                background: "#ffffff",
+                mainBkg: "#f6f8fb",
+                nodeBorder: "#256BEE",
+                clusterBkg: "#f6f8fb",
+                clusterBorder: "#d2d8e1",
+                titleColor: "#0f172a",
+                edgeLabelBackground: "#ffffff",
+            },
+        };
+    }
+
+    return {
+        theme: "dark" as const,
+        themeVariables: {
+            primaryColor: "#256BEE",
+            primaryTextColor: "#fff",
+            primaryBorderColor: "#60a5fa",
+            lineColor: "#60a5fa",
+            secondaryColor: "#1a1d24",
+            tertiaryColor: "#0B0D12",
+            background: "#0B0D12",
+            mainBkg: "#1a1d24",
+            nodeBorder: "#60a5fa",
+            clusterBkg: "#1a1d24",
+            clusterBorder: "#60a5fa",
+            titleColor: "#fff",
+            edgeLabelBackground: "#1a1d24",
+        },
+    };
+}
+
+export function MermaidRenderer({ code, className = "", theme = "dark" }: MermaidRendererProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [error, setError] = useState<string | null>(null);
     const [svg, setSvg] = useState<string>("");
@@ -45,6 +63,17 @@ export function MermaidRenderer({ code, className = "" }: MermaidRendererProps) 
             try {
                 setError(null);
                 const id = `mermaid-${Date.now()}`;
+                const config = getThemeConfig(theme);
+
+                mermaid.initialize({
+                    startOnLoad: false,
+                    theme: config.theme,
+                    themeVariables: config.themeVariables,
+                    flowchart: {
+                        htmlLabels: true,
+                        curve: "basis",
+                    },
+                });
 
                 // Validate the syntax first
                 const isValid = await mermaid.parse(code);
@@ -63,7 +92,7 @@ export function MermaidRenderer({ code, className = "" }: MermaidRendererProps) 
         };
 
         renderDiagram();
-    }, [code]);
+    }, [code, theme]);
 
     if (error) {
         return (

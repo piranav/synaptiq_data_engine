@@ -102,6 +102,32 @@ class Settings(BaseSettings):
         description="Refresh token expiration in days"
     )
 
+    # Frontend / OAuth
+    frontend_origin: str = Field(
+        default="http://localhost:3000",
+        description="Allowed frontend origin for OAuth popup communication"
+    )
+    oauth_backend_base_url: Optional[str] = Field(
+        default=None,
+        description="Public backend base URL for OAuth callback URLs"
+    )
+    google_oauth_client_id: Optional[str] = Field(
+        default=None,
+        description="Google OAuth client ID"
+    )
+    google_oauth_client_secret: Optional[str] = Field(
+        default=None,
+        description="Google OAuth client secret"
+    )
+    github_oauth_client_id: Optional[str] = Field(
+        default=None,
+        description="GitHub OAuth client ID"
+    )
+    github_oauth_client_secret: Optional[str] = Field(
+        default=None,
+        description="GitHub OAuth client secret"
+    )
+
     # AWS S3 Configuration
     aws_access_key_id: Optional[str] = Field(
         default=None,
@@ -137,5 +163,4 @@ def get_settings() -> Settings:
     Uses lru_cache to ensure settings are only loaded once.
     """
     return Settings()
-
 

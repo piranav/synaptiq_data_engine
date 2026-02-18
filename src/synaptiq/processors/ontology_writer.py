@@ -62,7 +62,7 @@ class OntologyWriter(BaseProcessor):
         conflict_resolver: Optional[ConflictResolver] = None,
         write_sources: bool = True,
         write_chunks: bool = True,
-        confidence_threshold: float = 0.5,
+        confidence_threshold: float = 0.75,
     ):
         """
         Initialize the ontology writer.
@@ -173,6 +173,10 @@ class OntologyWriter(BaseProcessor):
             # Batch insert all triples
             if all_triples:
                 count = await self.fuseki.insert_triples(user_id, all_triples)
+                
+                # Recompute importance scores for affected concepts
+                await self._update_concept_importance(user_id)
+                
                 logger.info(
                     "OntologyWriter complete",
                     user_id=user_id,
@@ -573,6 +577,120 @@ class OntologyWriter(BaseProcessor):
             )
         
         return triples
+
+
+    async def _update_concept_importance(self, user_id: str) -> None:
+        """
+        Recompute importance scores for all concepts in the user's graph.
+        
+        Importance = mentionCount * sourceDiversity * (1 + relationshipCount * 0.1)
+        
+        This runs after each ingestion batch so scores stay current.
+        """
+        try:
+            # Compute mention count, source diversity, and relationship count per concept
+            sparql = """
+            SELECT ?concept
+                   (COUNT(DISTINCT ?chunk) AS ?mentionCount)
+                   (COUNT(DISTINCT ?source) AS ?sourceCount)
+                   (COUNT(DISTINCT ?related) AS ?relCount)
+            WHERE {
+                ?concept a syn:Concept .
+                OPTIONAL {
+                    {
+                        ?concept syn:definedIn ?chunk .
+                        ?chunk syn:derivedFrom ?source .
+                    }
+                    UNION
+                    {
+                        ?concept syn:mentionedIn ?chunk .
+                        ?chunk syn:derivedFrom ?source .
+                    }
+                }
+                OPTIONAL {
+                    {
+                        ?concept ?relType ?related .
+                        ?related a syn:Concept .
+                        FILTER(?relType IN (
+                            syn:isA, syn:partOf, syn:prerequisiteFor,
+                            syn:relatedTo, syn:oppositeOf, syn:usedIn
+                        ))
+                    }
+                    UNION
+                    {
+                        ?related ?relType ?concept .
+                        ?related a syn:Concept .
+                        FILTER(?relType IN (
+                            syn:isA, syn:partOf, syn:prerequisiteFor,
+                            syn:relatedTo, syn:oppositeOf, syn:usedIn
+                        ))
+                    }
+                }
+            }
+            GROUP BY ?concept
+            """
+            
+            results = await self.fuseki.query(user_id, sparql)
+            
+            if not results:
+                return
+            
+            # Build triples for importance scores
+            importance_triples: list[dict[str, Any]] = []
+            
+            for r in results:
+                concept_uri = r.get("concept", "")
+                if not concept_uri:
+                    continue
+                
+                mention_count = int(r.get("mentionCount", "0"))
+                source_count = int(r.get("sourceCount", "0"))
+                rel_count = int(r.get("relCount", "0"))
+                
+                # importance = mentions * source_diversity * (1 + 0.1 * rel_count)
+                importance = max(mention_count, 1) * max(source_count, 1) * (1 + 0.1 * rel_count)
+                
+                importance_triples.append({
+                    "subject": concept_uri,
+                    "predicate": SYNAPTIQ.term("importance"),
+                    "object": round(importance, 2),
+                    "is_literal": True,
+                })
+                importance_triples.append({
+                    "subject": concept_uri,
+                    "predicate": SYNAPTIQ.term("mentionCount"),
+                    "object": mention_count,
+                    "is_literal": True,
+                })
+            
+            # Delete old importance/mentionCount values first, then insert new ones
+            delete_sparql = """
+            DELETE {
+                ?concept syn:importance ?oldImportance .
+                ?concept syn:mentionCount ?oldCount .
+            }
+            WHERE {
+                ?concept a syn:Concept .
+                OPTIONAL { ?concept syn:importance ?oldImportance }
+                OPTIONAL { ?concept syn:mentionCount ?oldCount }
+            }
+            """
+            await self.fuseki.update(user_id, delete_sparql)
+            
+            if importance_triples:
+                await self.fuseki.insert_triples(user_id, importance_triples)
+                logger.info(
+                    "Concept importance updated",
+                    user_id=user_id,
+                    concept_count=len(results),
+                )
+            
+        except Exception as e:
+            logger.warning(
+                "Failed to update concept importance",
+                user_id=user_id,
+                error=str(e),
+            )
 
 
 class OntologyWriterDisabled(BaseProcessor):

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
-import { ArrowUp, Loader2, Sparkles } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import clsx from "clsx";
 
 interface ChatComposerProps {
@@ -9,6 +9,7 @@ interface ChatComposerProps {
     isSending: boolean;
     disabled?: boolean;
     placeholder?: string;
+    className?: string;
 }
 
 export function ChatComposer({
@@ -16,6 +17,7 @@ export function ChatComposer({
     isSending,
     disabled = false,
     placeholder = "Ask anything…",
+    className,
 }: ChatComposerProps) {
     const [content, setContent] = useState("");
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -47,14 +49,14 @@ export function ChatComposer({
     const canSend = content.trim().length > 0 && !isSending && !disabled;
 
     return (
-        <div className="w-full border-t border-white/10 px-4 md:px-8 lg:px-16 py-3 bg-black/20 backdrop-blur">
-            <div className="max-w-3xl mx-auto w-full">
+        <div className="sticky bottom-0 z-10 w-full border-t border-border px-4 md:px-6 py-3 bg-canvas/90 backdrop-blur-xl">
+            <div className={clsx("w-full", className)}>
                 <div className="flex items-end gap-2">
                     {/* Input Area */}
                     <div
                         className={clsx(
-                            "flex-1 rounded-md border border-white/10 bg-white/[0.02] p-2",
-                            "focus-within:ring-2 focus-within:ring-[#256BEE]/50 focus-within:border-[#256BEE]/50",
+                            "flex-1 rounded-md border border-border bg-surface p-2",
+                            "focus-within:ring-2 focus-within:ring-accent/30 focus-within:border-accent/50",
                             "transition-all"
                         )}
                     >
@@ -66,13 +68,13 @@ export function ChatComposer({
                             placeholder={placeholder}
                             disabled={isSending || disabled}
                             rows={1}
-                            className="w-full bg-transparent outline-none resize-none text-[13px] leading-[18px] text-white placeholder-white/40 min-h-[26px] max-h-[120px]"
+                            className="w-full bg-transparent outline-none resize-none text-[13px] leading-[18px] text-primary placeholder:text-secondary min-h-[26px] max-h-[120px]"
                         />
                         {/* Hints */}
                         <div className="mt-1 flex items-center gap-4">
-                            <div className="flex items-center gap-1 text-[12px] leading-[16px] text-white/50">
+                            <div className="flex items-center gap-1 text-[12px] leading-[16px] text-secondary">
                                 <Sparkles className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                <span>⌘Enter to send</span>
+                                <span>Enter to send · Shift+Enter newline</span>
                             </div>
                         </div>
                     </div>
@@ -83,10 +85,10 @@ export function ChatComposer({
                         disabled={!canSend}
                         className={clsx(
                             "h-9 px-3 rounded-md text-[13px] leading-[18px] font-medium transition-all",
-                            "border border-white/10",
+                            "border border-border",
                             canSend
-                                ? "bg-[#256BEE] hover:bg-[#1F5BCC] text-white"
-                                : "bg-white/[0.03] text-white/40 cursor-not-allowed"
+                                ? "bg-accent hover:bg-accent-hover text-white"
+                                : "bg-surface text-secondary cursor-not-allowed"
                         )}
                     >
                         {isSending ? (

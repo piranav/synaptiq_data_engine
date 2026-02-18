@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { MessageSquare, Loader2 } from "lucide-react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { MessageSquare, Loader2, PanelRightOpen, X } from "lucide-react";
 import { chatService, type Conversation, type Message } from "@/lib/api/chat";
-import { ConversationList, ChatComposer, MessageBubble } from "@/components/chat";
+import { ConversationList, ChatComposer, MessageBubble, ChatContextPanel } from "@/components/chat";
 
 export default function ChatPage() {
     // State
@@ -14,6 +14,7 @@ export default function ChatPage() {
     const [isLoadingMessages, setIsLoadingMessages] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+    const [showContextDrawer, setShowContextDrawer] = useState(false);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -22,43 +23,22 @@ export default function ChatPage() {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, []);
 
-    // Load conversations on mount
-    useEffect(() => {
-        loadConversations();
-    }, []);
-
-    // Load messages when conversation changes
-    useEffect(() => {
-        if (activeConversationId) {
-            loadMessages(activeConversationId);
-        } else {
-            setMessages([]);
-        }
-    }, [activeConversationId]);
-
-    // Scroll to bottom when messages change
-    useEffect(() => {
-        scrollToBottom();
-    }, [messages, scrollToBottom]);
-
-    const loadConversations = async () => {
+    const loadConversations = useCallback(async () => {
         try {
             setIsLoadingConversations(true);
             const { conversations: convs } = await chatService.listConversations();
             setConversations(convs);
 
             // Select first conversation if none selected
-            if (convs.length > 0 && !activeConversationId) {
-                setActiveConversationId(convs[0].id);
-            }
+            setActiveConversationId((previousId) => previousId || convs[0]?.id || null);
         } catch (error) {
             console.error("Failed to load conversations", error);
         } finally {
             setIsLoadingConversations(false);
         }
-    };
+    }, []);
 
-    const loadMessages = async (conversationId: string) => {
+    const loadMessages = useCallback(async (conversationId: string) => {
         try {
             setIsLoadingMessages(true);
             const { messages: msgs } = await chatService.getMessages(conversationId);
@@ -68,7 +48,26 @@ export default function ChatPage() {
         } finally {
             setIsLoadingMessages(false);
         }
-    };
+    }, []);
+
+    // Load conversations on mount
+    useEffect(() => {
+        loadConversations();
+    }, [loadConversations]);
+
+    // Load messages when conversation changes
+    useEffect(() => {
+        if (activeConversationId) {
+            loadMessages(activeConversationId);
+        } else {
+            setMessages([]);
+        }
+    }, [activeConversationId, loadMessages]);
+
+    // Scroll to bottom when messages change
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages, scrollToBottom]);
 
     const handleNewConversation = async () => {
         try {
@@ -96,7 +95,7 @@ export default function ChatPage() {
 
         try {
             await chatService.deleteConversation(id);
-        } catch (error) {
+        } catch {
             // Silently handle - conversation may already be deleted (404)
             // We've already removed it from the UI, so no action needed
             console.warn("Delete conversation request failed (may already be deleted)", id);
@@ -151,8 +150,13 @@ export default function ChatPage() {
         setIsSidebarCollapsed(!isSidebarCollapsed);
     };
 
+    const activeConversation = useMemo(
+        () => conversations.find((conversation) => conversation.id === activeConversationId) || null,
+        [activeConversationId, conversations],
+    );
+
     return (
-        <div className="flex h-full bg-[#0B0D12]">
+        <div className="grid h-full bg-canvas grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] min-[1600px]:grid-cols-[280px_minmax(0,1fr)_320px]">
             {/* Sidebar */}
             <ConversationList
                 conversations={conversations}
@@ -165,24 +169,33 @@ export default function ChatPage() {
                 onToggleCollapse={handleToggleSidebar}
             />
 
-            {/* Main Chat Area */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
+            {/* Main Chat Area (center column) */}
+            <div className="min-w-0 flex flex-col h-full overflow-hidden">
                 {activeConversationId || messages.length > 0 ? (
                     <>
                         {/* Messages */}
-                        <div className="flex-1 w-full overflow-y-auto no-scrollbar px-4 md:px-8 lg:px-16 py-4">
-                            <div className="max-w-3xl mx-auto space-y-4">
+                        <div className="flex-1 w-full overflow-y-auto thin-scrollbar px-4 md:px-8 py-5">
+                            <div className="mx-auto w-full max-w-[840px] space-y-4">
+                                <div className="sticky top-0 z-10 flex justify-end min-[1600px]:hidden">
+                                    <button
+                                        onClick={() => setShowContextDrawer(true)}
+                                        className="h-8 px-2.5 rounded-md border border-border bg-surface/95 backdrop-blur text-[12px] text-secondary hover:text-primary hover:bg-elevated inline-flex items-center gap-1.5"
+                                    >
+                                        <PanelRightOpen className="w-3.5 h-3.5" />
+                                        Context
+                                    </button>
+                                </div>
                                 {isLoadingMessages ? (
                                     <div className="flex items-center justify-center h-32">
-                                        <Loader2 className="w-6 h-6 animate-spin text-white/60" />
+                                        <Loader2 className="w-6 h-6 animate-spin text-secondary" />
                                     </div>
                                 ) : messages.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center h-64 text-center">
-                                        <MessageSquare className="w-12 h-12 text-white/40 mb-4" strokeWidth={1.5} />
-                                        <h3 className="text-[18px] leading-[24px] font-semibold text-white mb-2" style={{ fontFamily: "'SF Pro Display', sans-serif" }}>
+                                        <MessageSquare className="w-12 h-12 text-secondary mb-4" strokeWidth={1.5} />
+                                        <h3 className="text-[18px] leading-[24px] font-semibold text-primary mb-2">
                                             Ask anything
                                         </h3>
-                                        <p className="text-[13px] leading-[18px] text-white/60 max-w-md">
+                                        <p className="text-[13px] leading-[18px] text-secondary max-w-md">
                                             Query your knowledge base in natural language. Get answers with citations from your sources.
                                         </p>
                                     </div>
@@ -194,10 +207,10 @@ export default function ChatPage() {
 
                                 {/* Streaming indicator */}
                                 {isSending && (
-                                    <div className="max-w-3xl">
-                                        <div className="mb-1 text-[12px] leading-[16px] text-white/60">Synaptiq</div>
-                                        <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-                                            <div className="flex items-center gap-2 text-white/60">
+                                    <div className="w-full">
+                                        <div className="mb-1 text-[12px] leading-[16px] text-secondary">Synaptiq</div>
+                                        <div className="rounded-lg border border-border bg-surface p-3">
+                                            <div className="flex items-center gap-2 text-secondary">
                                                 <Loader2 className="w-4 h-4 animate-spin" />
                                                 <span className="text-[13px] leading-[18px]">Thinking...</span>
                                             </div>
@@ -210,29 +223,68 @@ export default function ChatPage() {
                         </div>
 
                         {/* Composer */}
-                        <ChatComposer onSend={handleSendMessage} isSending={isSending} />
+                        <ChatComposer
+                            onSend={handleSendMessage}
+                            isSending={isSending}
+                            className="mx-auto max-w-[840px]"
+                        />
                     </>
                 ) : (
                     /* Empty state when no conversation */
                     <div className="flex-1 w-full flex flex-col items-center justify-center text-center px-6">
-                        <div className="w-16 h-16 rounded-full bg-[#256BEE]/10 border border-[#256BEE]/30 flex items-center justify-center mb-6">
-                            <MessageSquare className="w-8 h-8 text-[#256BEE]" strokeWidth={1.5} />
+                        <div className="w-16 h-16 rounded-full bg-accent/10 border border-accent/30 flex items-center justify-center mb-6">
+                            <MessageSquare className="w-8 h-8 text-accent" strokeWidth={1.5} />
                         </div>
-                        <h2 className="text-[24px] leading-[28px] font-semibold text-white mb-2" style={{ fontFamily: "'SF Pro Display', sans-serif" }}>
+                        <h2 className="text-[24px] leading-[28px] font-semibold text-primary mb-2">
                             Ask anything
                         </h2>
-                        <p className="text-[13px] leading-[18px] text-white/60 max-w-md mb-8">
+                        <p className="text-[13px] leading-[18px] text-secondary max-w-md mb-8">
                             Query your knowledge base in natural language. Get answers with citations from your sources.
                         </p>
                         <button
                             onClick={handleNewConversation}
-                            className="h-10 px-6 bg-[#256BEE] hover:bg-[#1F5BCC] text-white rounded-md text-[13px] leading-[18px] font-medium border border-white/10 transition-colors"
+                            className="h-10 px-6 bg-accent hover:bg-accent-hover text-white rounded-md text-[13px] leading-[18px] font-medium border border-border transition-colors"
                         >
                             Start a conversation
                         </button>
                     </div>
                 )}
             </div>
+
+            {/* Ultrawide context panel */}
+            <div className="hidden min-[1600px]:block h-full overflow-hidden">
+                <ChatContextPanel
+                    conversation={activeConversation}
+                    messages={messages}
+                />
+            </div>
+
+            {/* Context drawer for narrower widths */}
+            {showContextDrawer && (
+                <div className="fixed inset-0 z-[70] min-[1600px]:hidden">
+                    <div
+                        className="absolute inset-0 bg-black/35"
+                        onClick={() => setShowContextDrawer(false)}
+                    />
+                    <div className="absolute inset-y-0 right-0 w-[min(360px,90vw)] bg-canvas border-l border-border shadow-elevated">
+                        <div className="h-12 px-3 border-b border-border flex items-center justify-between">
+                            <h3 className="text-sm font-semibold text-primary">Conversation Context</h3>
+                            <button
+                                onClick={() => setShowContextDrawer(false)}
+                                className="h-8 w-8 rounded-md border border-border text-secondary hover:text-primary hover:bg-[var(--hover-bg)] inline-flex items-center justify-center"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                        <div className="h-[calc(100%-48px)]">
+                            <ChatContextPanel
+                                conversation={activeConversation}
+                                messages={messages}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
