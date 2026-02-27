@@ -228,27 +228,32 @@ async def update_settings(
     """
     user_service = UserService(session)
     
-    # Handle API key clearing: empty string means clear the key
-    openai_key = body.openai_api_key
-    if openai_key is not None:
-        openai_key = openai_key.strip() if openai_key else None
+    # Build updates dict manually so we can distinguish "not provided" from "clear"
+    updates: dict = {}
+    if body.theme is not None:
+        updates["theme"] = body.theme
+    if body.accent_color is not None:
+        updates["accent_color"] = body.accent_color
+    if body.sidebar_collapsed is not None:
+        updates["sidebar_collapsed"] = body.sidebar_collapsed
+    if body.density is not None:
+        updates["density"] = body.density
+    if body.processing_mode is not None:
+        updates["processing_mode"] = body.processing_mode
+    if body.analytics_opt_in is not None:
+        updates["analytics_opt_in"] = body.analytics_opt_in
+    if body.preferred_model is not None:
+        updates["preferred_model"] = body.preferred_model
     
-    anthropic_key = body.anthropic_api_key
-    if anthropic_key is not None:
-        anthropic_key = anthropic_key.strip() if anthropic_key else None
+    # API keys: empty string = clear, non-empty = set, None = leave unchanged
+    if body.openai_api_key is not None:
+        stripped = body.openai_api_key.strip()
+        updates["openai_api_key"] = stripped if stripped else None
+    if body.anthropic_api_key is not None:
+        stripped = body.anthropic_api_key.strip()
+        updates["anthropic_api_key"] = stripped if stripped else None
     
-    settings = await user_service.update_settings(
-        user_id=user.id,
-        theme=body.theme,
-        accent_color=body.accent_color,
-        sidebar_collapsed=body.sidebar_collapsed,
-        density=body.density,
-        processing_mode=body.processing_mode,
-        analytics_opt_in=body.analytics_opt_in,
-        openai_api_key=openai_key,
-        anthropic_api_key=anthropic_key,
-        preferred_model=body.preferred_model,
-    )
+    settings = await user_service.update_settings_raw(user.id, updates)
     
     return UserSettingsResponse(
         theme=settings.theme,

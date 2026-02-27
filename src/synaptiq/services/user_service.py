@@ -181,6 +181,29 @@ class UserService:
         
         return await self.get_user_settings(user_id)
     
+    async def update_settings_raw(self, user_id: str, updates: dict) -> Optional[UserSettings]:
+        """
+        Update user settings with explicit values. Unlike update_settings,
+        this does NOT filter out None values — a None value will clear
+        the column (used for API key clearing).
+        """
+        if not updates:
+            return await self.get_user_settings(user_id)
+        
+        settings = await self.get_user_settings(user_id)
+        if not settings:
+            settings = UserSettings(user_id=user_id, **updates)
+            self.session.add(settings)
+        else:
+            await self.session.execute(
+                update(UserSettings)
+                .where(UserSettings.user_id == user_id)
+                .values(**updates)
+            )
+        
+        await self.session.flush()
+        return await self.get_user_settings(user_id)
+    
     async def provision_knowledge_space(self, user_id: str) -> str:
         """
         Provision a knowledge graph for a new user.
