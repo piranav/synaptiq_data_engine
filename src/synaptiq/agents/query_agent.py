@@ -3,6 +3,8 @@ Query Agent - Main orchestrator for the knowledge retrieval pipeline.
 
 Coordinates intent classification, strategy selection, retrieval execution,
 and response synthesis using OpenAI Agents SDK.
+
+Supports multiple model providers (OpenAI and Anthropic) with per-user API keys.
 """
 
 import os
@@ -19,6 +21,7 @@ if not os.environ.get("OPENAI_API_KEY"):
     os.environ["OPENAI_API_KEY"] = _settings.openai_api_key
 
 from agents import Agent, Runner
+from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.result import RunResultStreaming
 
 from synaptiq.storage.fuseki import FusekiStore
@@ -124,6 +127,61 @@ class QueryAgent:
                 ),
             ],
         )
+    
+    @staticmethod
+    def _resolve_model(
+        model_id: Optional[str],
+        user_api_keys: Optional[dict[str, str]] = None,
+    ):
+        """
+        Return a model specifier usable by the Agents SDK.
+        
+        For OpenAI models, returns the model name string (SDK default).
+        For Anthropic models, returns an OpenAIChatCompletionsModel
+        that talks to Anthropic's OpenAI-compatible endpoint with the
+        user's Anthropic API key.
+        """
+        if not model_id:
+            model_id = "gpt-4.1"
+        
+        ANTHROPIC_MODELS = {
+            "claude-sonnet-4-20250514",
+            "claude-3-5-haiku-20241022",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-opus-20240229",
+        }
+        
+        if model_id in ANTHROPIC_MODELS or model_id.startswith("claude"):
+            api_key = (user_api_keys or {}).get("anthropic", "")
+            if not api_key:
+                raise ValueError(
+                    "An Anthropic API key is required to use Claude models. "
+                    "Please add your key in Settings → API Keys."
+                )
+            import openai as _openai
+            
+            client = _openai.AsyncOpenAI(
+                api_key=api_key,
+                base_url="https://api.anthropic.com/v1/",
+                default_headers={"anthropic-version": "2023-06-01"},
+            )
+            return OpenAIChatCompletionsModel(
+                model=model_id,
+                openai_client=client,
+            )
+        
+        # OpenAI model — optionally use user's own key
+        user_openai_key = (user_api_keys or {}).get("openai")
+        if user_openai_key:
+            import openai as _openai
+            
+            client = _openai.AsyncOpenAI(api_key=user_openai_key)
+            return OpenAIChatCompletionsModel(
+                model=model_id,
+                openai_client=client,
+            )
+        
+        return model_id
     
     def _create_context(self, user_id: str) -> AgentContext:
         """Create agent context for a request."""
@@ -940,6 +998,8 @@ class QueryAgent:
         user_id: str,
         query: str,
         session_id: str,
+        model_id: Optional[str] = None,
+        user_api_keys: Optional[dict[str, str]] = None,
     ) -> QueryResponse:
         """
         Execute a query against the user's knowledge base.
@@ -948,6 +1008,8 @@ class QueryAgent:
             user_id: User identifier
             query: Natural language query
             session_id: Conversation session ID
+            model_id: Model to use for synthesis (e.g. 'gpt-4.1', 'claude-sonnet-4-20250514')
+            user_api_keys: Dict of provider->api_key for user's custom keys
             
         Returns:
             QueryResponse with answer, citations, and metadata
@@ -957,6 +1019,7 @@ class QueryAgent:
             user_id=user_id,
             query=query[:50],
             session_id=session_id,
+            model=model_id,
         )
         
         # Create context
@@ -1010,8 +1073,17 @@ class QueryAgent:
                 query, intent, retrieval_results
             )
             
+            # Use user-selected model for the synthesizer
+            synth_agent = self.synthesizer
+            try:
+                resolved_model = self._resolve_model(model_id, user_api_keys)
+                if resolved_model != self.synthesizer.model:
+                    synth_agent = self.synthesizer.clone(model=resolved_model)
+            except ValueError:
+                pass  # Fall back to default model
+            
             response_result = await Runner.run(
-                self.synthesizer,
+                synth_agent,
                 synthesis_input,
                 context=context,
                 session=session,
@@ -1061,6 +1133,8 @@ class QueryAgent:
         user_id: str,
         query: str,
         session_id: str,
+        model_id: Optional[str] = None,
+        user_api_keys: Optional[dict[str, str]] = None,
     ) -> AsyncIterator[str]:
         """
         Execute a query with streaming response.
@@ -1069,6 +1143,8 @@ class QueryAgent:
             user_id: User identifier
             query: Natural language query
             session_id: Conversation session ID
+            model_id: Model to use for synthesis
+            user_api_keys: Dict of provider->api_key
             
         Yields:
             Streaming response chunks
@@ -1078,6 +1154,7 @@ class QueryAgent:
             user_id=user_id,
             query=query[:50],
             session_id=session_id,
+            model=model_id,
         )
         
         # Create context
@@ -1108,9 +1185,18 @@ class QueryAgent:
                 query, intent, retrieval_results
             )
             
+            # Use user-selected model for the streaming orchestrator
+            stream_agent = self.orchestrator
+            try:
+                resolved_model = self._resolve_model(model_id, user_api_keys)
+                if resolved_model != self.orchestrator.model:
+                    stream_agent = self.orchestrator.clone(model=resolved_model)
+            except ValueError:
+                pass
+            
             # Use streaming runner
             async with Runner.run_streamed(
-                self.orchestrator,  # Use orchestrator for streaming
+                stream_agent,
                 synthesis_input,
                 context=context,
                 session=session,

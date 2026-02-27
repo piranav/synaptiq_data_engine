@@ -3,13 +3,16 @@
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import clsx from "clsx";
+import { ModelSelector } from "./ModelSelector";
 
 interface ChatComposerProps {
-    onSend: (content: string) => void;
+    onSend: (content: string, model?: string) => void;
     isSending: boolean;
     disabled?: boolean;
     placeholder?: string;
     className?: string;
+    selectedModel: string;
+    onModelChange: (modelId: string) => void;
 }
 
 export function ChatComposer({
@@ -18,6 +21,8 @@ export function ChatComposer({
     disabled = false,
     placeholder = "Ask anything…",
     className,
+    selectedModel,
+    onModelChange,
 }: ChatComposerProps) {
     const [content, setContent] = useState("");
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -35,7 +40,7 @@ export function ChatComposer({
     const handleSend = () => {
         const trimmed = content.trim();
         if (!trimmed || isSending || disabled) return;
-        onSend(trimmed);
+        onSend(trimmed, selectedModel);
         setContent("");
     };
 
@@ -70,12 +75,16 @@ export function ChatComposer({
                             rows={1}
                             className="w-full bg-transparent outline-none resize-none text-[13px] leading-[18px] text-primary placeholder:text-secondary min-h-[26px] max-h-[120px]"
                         />
-                        {/* Hints */}
-                        <div className="mt-1 flex items-center gap-4">
+                        {/* Hints + Model Selector */}
+                        <div className="mt-1 flex items-center justify-between">
                             <div className="flex items-center gap-1 text-[12px] leading-[16px] text-secondary">
                                 <Sparkles className="h-3.5 w-3.5" strokeWidth={1.5} />
                                 <span>Enter to send · Shift+Enter newline</span>
                             </div>
+                            <ModelSelector
+                                selectedModel={selectedModel}
+                                onModelChange={onModelChange}
+                            />
                         </div>
                     </div>
 

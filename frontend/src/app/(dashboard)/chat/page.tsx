@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MessageSquare, Loader2, PanelRightOpen, X } from "lucide-react";
 import { chatService, type Conversation, type Message } from "@/lib/api/chat";
+import { userService } from "@/lib/api/user";
 import { ConversationList, ChatComposer, MessageBubble, ChatContextPanel } from "@/components/chat";
 
 export default function ChatPage() {
@@ -15,6 +16,7 @@ export default function ChatPage() {
     const [isSending, setIsSending] = useState(false);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
     const [showContextDrawer, setShowContextDrawer] = useState(false);
+    const [selectedModel, setSelectedModel] = useState("gpt-4.1");
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -50,9 +52,12 @@ export default function ChatPage() {
         }
     }, []);
 
-    // Load conversations on mount
+    // Load conversations and preferred model on mount
     useEffect(() => {
         loadConversations();
+        userService.getSettings().then((s) => {
+            if (s.preferred_model) setSelectedModel(s.preferred_model);
+        }).catch(() => {});
     }, [loadConversations]);
 
     // Load messages when conversation changes
@@ -102,7 +107,7 @@ export default function ChatPage() {
         }
     };
 
-    const handleSendMessage = async (content: string) => {
+    const handleSendMessage = async (content: string, model?: string) => {
         // Create conversation if none exists
         let conversationId = activeConversationId;
         if (!conversationId) {
@@ -121,7 +126,7 @@ export default function ChatPage() {
 
         try {
             // Use non-streaming for now (simpler)
-            const response = await chatService.sendMessage(conversationId, content);
+            const response = await chatService.sendMessage(conversationId, content, model);
 
             // Add both messages to the list
             setMessages((prev) => [...prev, response.user_message, response.assistant_message]);
@@ -227,6 +232,8 @@ export default function ChatPage() {
                             onSend={handleSendMessage}
                             isSending={isSending}
                             className="mx-auto max-w-[840px]"
+                            selectedModel={selectedModel}
+                            onModelChange={setSelectedModel}
                         />
                     </>
                 ) : (

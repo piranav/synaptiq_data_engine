@@ -193,6 +193,17 @@ class UserSettings(Base):
     # Privacy
     analytics_opt_in = Column(Boolean, default=False, nullable=False)
     
+    # API Keys (encrypted at rest in production)
+    openai_api_key = Column(String(500), nullable=True)
+    anthropic_api_key = Column(String(500), nullable=True)
+    
+    # Preferred chat model
+    preferred_model = Column(
+        String(100),
+        default="gpt-4.1",
+        nullable=False,
+    )
+    
     # Timestamps
     updated_at = Column(
         DateTime(timezone=True),

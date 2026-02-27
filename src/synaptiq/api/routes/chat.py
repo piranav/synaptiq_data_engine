@@ -21,7 +21,8 @@ from sse_starlette.sse import EventSourceResponse
 from synaptiq.api.middleware.auth import get_current_user
 from synaptiq.domain.models import User
 from synaptiq.infrastructure.database import get_async_session
-from synaptiq.services.chat_service import ChatService
+from synaptiq.services.chat_service import ChatService  # pragma: allowlist secret
+from synaptiq.services.user_service import UserService  # pragma: allowlist secret
 
 logger = structlog.get_logger(__name__)
 
@@ -75,6 +76,10 @@ class MessageRequest(BaseModel):
         description="Message content",
         min_length=1,
         max_length=10000,
+    )
+    model: Optional[str] = Field(
+        None,
+        description="Model ID to use for this message (e.g. 'gpt-4.1', 'claude-sonnet-4-20250514'). Falls back to user's preferred model if not set.",
     )
 
 
@@ -378,13 +383,29 @@ async def send_message(
         conversation_id=conversation_id,
         user_id=user.id,
         content_length=len(body.content),
+        model=body.model,
     )
+    
+    # Resolve model and API keys from user settings
+    session_for_settings = chat_service.session
+    user_service = UserService(session_for_settings)
+    settings = await user_service.get_user_settings(user.id)
+    
+    model_id = body.model or (settings.preferred_model if settings else None) or "gpt-4.1"
+    user_api_keys = {}
+    if settings:
+        if settings.openai_api_key:
+            user_api_keys["openai"] = settings.openai_api_key
+        if settings.anthropic_api_key:
+            user_api_keys["anthropic"] = settings.anthropic_api_key
     
     try:
         user_message, assistant_message = await chat_service.send_message(
             user_id=user.id,
             conversation_id=conversation_id,
             content=body.content,
+            model_id=model_id,
+            user_api_keys=user_api_keys,
         )
         
         return ChatResponse(
@@ -452,7 +473,21 @@ async def send_message_stream(
         "Streaming message",
         conversation_id=conversation_id,
         user_id=user.id,
+        model=body.model,
     )
+    
+    # Resolve model and API keys
+    session_for_settings = chat_service.session
+    user_svc = UserService(session_for_settings)
+    user_settings = await user_svc.get_user_settings(user.id)
+    
+    stream_model_id = body.model or (user_settings.preferred_model if user_settings else None) or "gpt-4.1"
+    stream_api_keys = {}
+    if user_settings:
+        if user_settings.openai_api_key:
+            stream_api_keys["openai"] = user_settings.openai_api_key
+        if user_settings.anthropic_api_key:
+            stream_api_keys["anthropic"] = user_settings.anthropic_api_key
     
     async def event_generator():
         """Generate SSE events from streaming response."""
@@ -461,6 +496,8 @@ async def send_message_stream(
                 user_id=user.id,
                 conversation_id=conversation_id,
                 content=body.content,
+                model_id=stream_model_id,
+                user_api_keys=stream_api_keys,
             ):
                 yield {
                     "event": event["event"],
@@ -554,6 +591,10 @@ class QuickChatRequest(BaseModel):
         None,
         description="Existing conversation ID (creates new if not provided)",
     )
+    model: Optional[str] = Field(
+        None,
+        description="Model ID to use for this chat",
+    )
 
 
 @router.post(
@@ -582,12 +623,27 @@ async def quick_chat(
         conversation = await chat_service.create_conversation(user_id=user.id)
         conversation_id = conversation.id
     
+    # Resolve model and API keys
+    session_for_qc = chat_service.session
+    qc_user_service = UserService(session_for_qc)
+    qc_settings = await qc_user_service.get_user_settings(user.id)
+    
+    qc_model_id = body.model or (qc_settings.preferred_model if qc_settings else None) or "gpt-4.1"
+    qc_api_keys = {}
+    if qc_settings:
+        if qc_settings.openai_api_key:
+            qc_api_keys["openai"] = qc_settings.openai_api_key
+        if qc_settings.anthropic_api_key:
+            qc_api_keys["anthropic"] = qc_settings.anthropic_api_key
+    
     # Send message
     try:
         user_message, assistant_message = await chat_service.send_message(
             user_id=user.id,
             conversation_id=conversation_id,
             content=body.query,
+            model_id=qc_model_id,
+            user_api_keys=qc_api_keys,
         )
         
         return ChatResponse(

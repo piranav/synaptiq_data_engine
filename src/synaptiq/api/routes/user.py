@@ -62,6 +62,9 @@ class UserSettingsResponse(BaseModel):
     density: str
     processing_mode: str
     analytics_opt_in: bool
+    openai_api_key_set: bool = False
+    anthropic_api_key_set: bool = False
+    preferred_model: str = "gpt-4.1"
 
 
 class UpdateSettingsRequest(BaseModel):
@@ -73,6 +76,9 @@ class UpdateSettingsRequest(BaseModel):
     density: Optional[str] = Field(None, pattern="^(comfortable|compact)$")
     processing_mode: Optional[str] = Field(None, pattern="^(cloud|on_device)$")
     analytics_opt_in: Optional[bool] = None
+    openai_api_key: Optional[str] = Field(None, max_length=500, description="OpenAI API key (empty string to clear)")
+    anthropic_api_key: Optional[str] = Field(None, max_length=500, description="Anthropic API key (empty string to clear)")
+    preferred_model: Optional[str] = Field(None, max_length=100, description="Preferred chat model ID")
 
 
 class UserStatsResponse(BaseModel):
@@ -189,6 +195,9 @@ async def get_settings(
             density="comfortable",
             processing_mode="cloud",
             analytics_opt_in=False,
+            openai_api_key_set=False,
+            anthropic_api_key_set=False,
+            preferred_model="gpt-4.1",
         )
     
     return UserSettingsResponse(
@@ -198,6 +207,9 @@ async def get_settings(
         density=settings.density,
         processing_mode=settings.processing_mode,
         analytics_opt_in=settings.analytics_opt_in,
+        openai_api_key_set=bool(settings.openai_api_key),
+        anthropic_api_key_set=bool(settings.anthropic_api_key),
+        preferred_model=settings.preferred_model or "gpt-4.1",
     )
 
 
@@ -216,6 +228,15 @@ async def update_settings(
     """
     user_service = UserService(session)
     
+    # Handle API key clearing: empty string means clear the key
+    openai_key = body.openai_api_key
+    if openai_key is not None:
+        openai_key = openai_key.strip() if openai_key else None
+    
+    anthropic_key = body.anthropic_api_key
+    if anthropic_key is not None:
+        anthropic_key = anthropic_key.strip() if anthropic_key else None
+    
     settings = await user_service.update_settings(
         user_id=user.id,
         theme=body.theme,
@@ -224,6 +245,9 @@ async def update_settings(
         density=body.density,
         processing_mode=body.processing_mode,
         analytics_opt_in=body.analytics_opt_in,
+        openai_api_key=openai_key,
+        anthropic_api_key=anthropic_key,
+        preferred_model=body.preferred_model,
     )
     
     return UserSettingsResponse(
@@ -233,7 +257,61 @@ async def update_settings(
         density=settings.density,
         processing_mode=settings.processing_mode,
         analytics_opt_in=settings.analytics_opt_in,
+        openai_api_key_set=bool(settings.openai_api_key),
+        anthropic_api_key_set=bool(settings.anthropic_api_key),
+        preferred_model=settings.preferred_model or "gpt-4.1",
     )
+
+
+class ModelInfo(BaseModel):
+    """Information about an available AI model."""
+    
+    id: str
+    name: str
+    provider: str
+    description: str
+    requires_key: bool = False
+
+
+AVAILABLE_MODELS = [
+    ModelInfo(id="gpt-4.1", name="GPT-4.1", provider="openai", description="Fast, versatile model from OpenAI", requires_key=False),
+    ModelInfo(id="gpt-4.1-mini", name="GPT-4.1 Mini", provider="openai", description="Lightweight, cost-effective OpenAI model", requires_key=False),
+    ModelInfo(id="gpt-4.1-nano", name="GPT-4.1 Nano", provider="openai", description="Fastest, most affordable OpenAI model", requires_key=False),
+    ModelInfo(id="o4-mini", name="o4-mini", provider="openai", description="OpenAI reasoning model — compact", requires_key=False),
+    ModelInfo(id="claude-sonnet-4-20250514", name="Claude Sonnet 4", provider="anthropic", description="Balanced performance and speed from Anthropic", requires_key=True),
+    ModelInfo(id="claude-3-5-haiku-20241022", name="Claude 3.5 Haiku", provider="anthropic", description="Fast, lightweight Anthropic model", requires_key=True),
+]
+
+
+@router.get(
+    "/models",
+    response_model=list[ModelInfo],
+    summary="List available chat models",
+)
+async def list_models(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+) -> list[ModelInfo]:
+    """
+    List all available AI models for chat.
+
+    Anthropic models require the user to have set their own API key.
+    """
+    user_service = UserService(session)
+    settings = await user_service.get_user_settings(user.id)
+    
+    has_anthropic_key = bool(settings and settings.anthropic_api_key)
+    
+    models = []
+    for model in AVAILABLE_MODELS:
+        m = model.model_copy()
+        if model.provider == "anthropic":
+            m.requires_key = not has_anthropic_key
+        else:
+            m.requires_key = False
+        models.append(m)
+    
+    return models
 
 
 @router.get(

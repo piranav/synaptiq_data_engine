@@ -342,6 +342,8 @@ class ChatService:
         user_id: str,
         conversation_id: str,
         content: str,
+        model_id: Optional[str] = None,
+        user_api_keys: Optional[dict[str, str]] = None,
     ) -> tuple[Message, Message]:
         """
         Send a message and get agent response.
@@ -350,6 +352,8 @@ class ChatService:
             user_id: User ID
             conversation_id: Conversation ID
             content: User message content
+            model_id: Model to use (e.g. 'gpt-4.1', 'claude-sonnet-4-20250514')
+            user_api_keys: Dict of provider->api_key for user's custom keys
             
         Returns:
             Tuple of (user_message, assistant_message)
@@ -388,6 +392,8 @@ class ChatService:
                 user_id=user_id,
                 query=content,
                 session_id=conversation_id,
+                model_id=model_id,
+                user_api_keys=user_api_keys,
             )
             
             # Save assistant message
@@ -435,6 +441,8 @@ class ChatService:
         user_id: str,
         conversation_id: str,
         content: str,
+        model_id: Optional[str] = None,
+        user_api_keys: Optional[dict[str, str]] = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Send a message and stream the agent response.
@@ -443,6 +451,8 @@ class ChatService:
             user_id: User ID
             conversation_id: Conversation ID
             content: User message content
+            model_id: Model to use
+            user_api_keys: Dict of provider->api_key
             
         Yields:
             Event dicts with type and data
@@ -485,6 +495,8 @@ class ChatService:
                 user_id=user_id,
                 query=content,
                 session_id=conversation_id,
+                model_id=model_id,
+                user_api_keys=user_api_keys,
             ):
                 full_content.append(chunk)
                 yield {
