@@ -144,6 +144,7 @@ async def _resolve_chat_service(
     """Build a ChatService wired to the correct LLM provider."""
     from synaptiq.services.user_service import UserService
     from synaptiq.agents.model_config import get_model_info
+    from config.settings import get_settings
 
     info = get_model_info(model_id or "gpt-5.2")
     anthropic_key: Optional[str] = None
@@ -152,6 +153,11 @@ async def _resolve_chat_service(
         user_svc = UserService(session)
         keys = await user_svc.get_decrypted_api_keys(user.id)
         anthropic_key = keys.get("anthropic_api_key")
+
+        if not anthropic_key:
+            settings = get_settings()
+            anthropic_key = settings.anthropic_api_key
+
         if not anthropic_key:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

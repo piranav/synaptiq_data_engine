@@ -38,7 +38,7 @@ function ApiKeyInput({
     const [showKey, setShowKey] = useState(false);
     const [editing, setEditing] = useState(false);
 
-    const displayValue = editing ? value : "";
+    const showInput = !isSet || editing;
 
     return (
         <div className="space-y-2">
@@ -51,7 +51,7 @@ function ApiKeyInput({
                     </span>
                 )}
             </div>
-            {isSet && !editing ? (
+            {!showInput ? (
                 <div className="flex items-center gap-2">
                     <div className="flex-1 h-10 px-3 rounded-lg border border-border bg-canvas/50 flex items-center text-[13px] text-secondary font-mono">
                         {maskedValue || "****...****"}
@@ -68,7 +68,7 @@ function ApiKeyInput({
                     <div className="relative flex-1">
                         <input
                             type={showKey ? "text" : "password"}
-                            value={displayValue}
+                            value={value}
                             onChange={(e) => onChange(e.target.value)}
                             placeholder={placeholder}
                             className="w-full h-10 px-3 pr-10 rounded-lg border border-border bg-canvas/50 text-[13px] text-primary placeholder:text-secondary font-mono outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent/45 transition-all"
@@ -115,7 +115,14 @@ export default function SettingsPage() {
     const [isSavingAnthropic, setIsSavingAnthropic] = useState(false);
 
     useEffect(() => {
-        userService.getApiKeys().then(setApiKeys).catch(() => {});
+        userService.getApiKeys().then(setApiKeys).catch(() => {
+            setApiKeys({
+                openai_api_key_set: false,
+                openai_api_key_masked: "",
+                anthropic_api_key_set: false,
+                anthropic_api_key_masked: "",
+            });
+        });
     }, []);
 
     const handleSignOut = async () => {

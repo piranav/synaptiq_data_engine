@@ -39,10 +39,10 @@ AVAILABLE_MODELS: list[ModelInfo] = [
         model_name="gpt-5.2",
     ),
     ModelInfo(
-        id="o5.2",
-        display_name="O5.2 Thinking",
+        id="gpt-5.2-thinking",
+        display_name="GPT-5.2 Thinking",
         provider="openai",
-        model_name="o5.2",
+        model_name="gpt-5.2-thinking",
         is_reasoning=True,
     ),
     ModelInfo(
@@ -92,8 +92,9 @@ def resolve_model_for_agent(
         return info.model_name
 
     if info.provider == "anthropic":
-        if anthropic_api_key:
-            os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+        key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if key:
+            os.environ["ANTHROPIC_API_KEY"] = key
 
         try:
             from agents.extensions.models.litellm_model import LitellmModel
