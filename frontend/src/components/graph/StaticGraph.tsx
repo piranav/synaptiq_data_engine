@@ -29,7 +29,7 @@ export function StaticGraph() {
             // Draw Disk Boundary
             ctx.beginPath();
             ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-            ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+            ctx.strokeStyle = "rgba(132,170,205,0.35)";
             ctx.lineWidth = 2;
             ctx.stroke();
 
@@ -41,7 +41,7 @@ export function StaticGraph() {
 
                 ctx.beginPath();
                 ctx.arc(x, y, 4, 0, Math.PI * 2);
-                ctx.fillStyle = "rgba(99, 102, 241, 0.8)"; // Indigo (concept color)
+                ctx.fillStyle = "rgba(111,224,255,0.8)"; // Indigo (concept color)
                 ctx.fill();
 
                 // Connect to center
@@ -52,7 +52,7 @@ export function StaticGraph() {
                     centerY + Math.sin(time + offset + Math.PI / 2) * (radius * 0.2),
                     x, y
                 );
-                ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+                ctx.strokeStyle = "rgba(132,170,205,0.2)";
                 ctx.lineWidth = 1;
                 ctx.stroke();
             }
@@ -79,8 +79,8 @@ export function StaticGraph() {
     }, []);
 
     return (
-        <div className="w-full h-full flex items-center justify-center bg-[#1C1C1E] relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-black/50 to-transparent pointer-events-none" />
+        <div className="w-full h-full flex items-center justify-center bg-canvas relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-black/30 to-transparent pointer-events-none" />
             <canvas ref={canvasRef} className="w-full h-full" />
         </div>
     );

@@ -29,22 +29,22 @@ export function IngestionHealth({ jobs }: IngestionHealthProps) {
         : "0m";
 
     return (
-        <section className="dashboard-card rounded-[24px] p-5 h-full">
+        <section className="dashboard-card rounded-[14px] p-5 h-full">
             <div className="flex items-center gap-2.5 mb-4">
                 <IconFrame icon={Activity} tone="accent" />
                 <h3 className="text-sm font-semibold text-primary">Ingestion Health</h3>
             </div>
 
             <div className="grid grid-cols-3 gap-2.5 mb-4">
-                <div className="rounded-[14px] border border-border bg-elevated p-2.5">
+                <div className="rounded-[10px] border border-border bg-elevated p-2.5">
                     <p className="text-[10px] uppercase tracking-[0.12em] text-secondary">Processing</p>
                     <p className="text-lg font-semibold text-primary mt-1">{processing.length}</p>
                 </div>
-                <div className="rounded-[14px] border border-border bg-elevated p-2.5">
+                <div className="rounded-[10px] border border-border bg-elevated p-2.5">
                     <p className="text-[10px] uppercase tracking-[0.12em] text-secondary">Failed</p>
                     <p className="text-lg font-semibold text-danger mt-1">{failed.length}</p>
                 </div>
-                <div className="rounded-[14px] border border-border bg-elevated p-2.5">
+                <div className="rounded-[10px] border border-border bg-elevated p-2.5">
                     <p className="text-[10px] uppercase tracking-[0.12em] text-secondary">Queue Age</p>
                     <p className="text-lg font-semibold text-primary mt-1">{queueAge}</p>
                 </div>
@@ -55,7 +55,7 @@ export function IngestionHealth({ jobs }: IngestionHealthProps) {
                     <p className="text-xs text-secondary">No recent ingestion jobs.</p>
                 ) : (
                     jobs.slice(0, 4).map((job) => (
-                        <div key={job.id} className="rounded-[14px] border border-border-subtle bg-elevated px-3 py-2.5">
+                        <div key={job.id} className="rounded-[10px] border border-border-subtle bg-elevated px-3 py-2.5">
                             <div className="flex items-center justify-between gap-2">
                                 <p className="text-xs text-primary truncate">{job.source_url || "Unknown source"}</p>
                                 <span className="text-[10px] text-secondary flex items-center gap-1 shrink-0">

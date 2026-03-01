@@ -47,7 +47,7 @@ export function StatsRow({ stats, loading = false }: StatsRowProps) {
         return (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-5">
                 {[1, 2, 3, 4].map((i) => (
-                    <div key={i} className="h-36 rounded-[24px] bg-surface border border-border animate-pulse" />
+                    <div key={i} className="h-36 rounded-[14px] bg-surface border border-border animate-pulse" />
                 ))}
             </div>
         );
@@ -57,7 +57,7 @@ export function StatsRow({ stats, loading = false }: StatsRowProps) {
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-5">
             {items.map((item, index) => {
                 return (
-                    <div key={index} className="dashboard-card rounded-[24px] p-5 flex flex-col justify-between min-h-[146px] hover:shadow-hover transition-all">
+                    <div key={index} className="dashboard-card rounded-[14px] p-5 flex flex-col justify-between min-h-[146px] hover:shadow-hover transition-all">
                         <div className="flex justify-between items-start mb-5">
                             <IconFrame icon={item.icon} tone={item.tone} size="sm" />
                             <span className="text-[10px] uppercase tracking-[0.14em] text-tertiary font-semibold">Live</span>

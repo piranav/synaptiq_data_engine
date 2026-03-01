@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { libraryService, LibraryItem, LibraryStats, LibraryItemType } from "@/lib/api/library";
 import {
     LibraryHeader,
@@ -15,7 +14,6 @@ import {
 import { AddSourceModal } from "@/components/dashboard/AddSourceModal";
 
 export default function LibraryPage() {
-    const router = useRouter();
 
     // State
     const [items, setItems] = useState<LibraryItem[]>([]);

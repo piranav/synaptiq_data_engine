@@ -85,7 +85,11 @@ class ApiClient {
 
             return { data, status: response.status, ok: response.ok };
         } catch (error) {
-            console.error(`API Request failed: ${endpoint}`, error);
+            const message = error instanceof Error ? error.message : "";
+            const isExpectedAuthError = /authentication required|token/i.test(message);
+            if (!isExpectedAuthError) {
+                console.error(`API Request failed: ${endpoint}`, error);
+            }
             throw error;
         }
     }

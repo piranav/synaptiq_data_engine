@@ -37,7 +37,7 @@ export function SourceMix({ sources }: SourceMixProps) {
         .sort((a, b) => b.count - a.count);
 
     return (
-        <section className="dashboard-card rounded-[24px] p-5 h-full">
+        <section className="dashboard-card rounded-[14px] p-5 h-full">
             <div className="flex items-center gap-2.5 mb-4">
                 <IconFrame icon={PieChart} tone="relation" />
                 <h3 className="text-sm font-semibold text-primary">Source Mix</h3>
@@ -48,7 +48,7 @@ export function SourceMix({ sources }: SourceMixProps) {
             ) : (
                 <div className="space-y-2.5">
                     {rows.map((row) => (
-                        <div key={row.type} className="rounded-[16px] border border-border-subtle bg-elevated p-3">
+                        <div key={row.type} className="rounded-[10px] border border-border-subtle bg-elevated p-3">
                             <div className="flex items-center justify-between text-xs mb-1">
                                 <span className="text-primary font-medium">{row.label}</span>
                                 <span className="text-secondary">{row.count} · {row.percentage}%</span>

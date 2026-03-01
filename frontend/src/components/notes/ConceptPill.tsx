@@ -16,12 +16,12 @@ export function ConceptPill({ concept, onClick, className = "" }: ConceptPillPro
     // Generate a color based on the concept name
     const getConceptColor = (name: string): string => {
         const colors = [
-            { bg: "bg-blue-500/20", border: "border-blue-500/30", text: "text-blue-300" },
-            { bg: "bg-purple-500/20", border: "border-purple-500/30", text: "text-purple-300" },
-            { bg: "bg-emerald-500/20", border: "border-emerald-500/30", text: "text-emerald-300" },
-            { bg: "bg-amber-500/20", border: "border-amber-500/30", text: "text-amber-300" },
-            { bg: "bg-rose-500/20", border: "border-rose-500/30", text: "text-rose-300" },
-            { bg: "bg-cyan-500/20", border: "border-cyan-500/30", text: "text-cyan-300" },
+            { bg: "bg-node-concept/16", border: "border-node-concept/35", text: "text-node-concept" },
+            { bg: "bg-node-source/16", border: "border-node-source/35", text: "text-node-source" },
+            { bg: "bg-node-definition/16", border: "border-node-definition/35", text: "text-node-definition" },
+            { bg: "bg-warning/16", border: "border-warning/35", text: "text-warning" },
+            { bg: "bg-danger/16", border: "border-danger/35", text: "text-danger" },
+            { bg: "bg-accent/16", border: "border-accent/35", text: "text-accent" },
         ];
         const hash = name.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
         return colors[hash % colors.length].bg + " " + colors[hash % colors.length].border + " " + colors[hash % colors.length].text;

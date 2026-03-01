@@ -70,8 +70,12 @@ class AuthService {
 
     private getTokens(): Tokens | null {
         if (typeof window === "undefined") return null;
-        const stored = localStorage.getItem(this.TOKEN_KEY);
-        return stored ? JSON.parse(stored) : null;
+        try {
+            const stored = localStorage.getItem(this.TOKEN_KEY);
+            return stored ? JSON.parse(stored) : null;
+        } catch {
+            return null;
+        }
     }
 
     private setSession(response: AuthResponse) {
@@ -236,6 +240,14 @@ class AuthService {
         if (typeof window === "undefined") return null;
         const stored = localStorage.getItem(this.USER_KEY);
         return stored ? JSON.parse(stored) : null;
+    }
+
+    getAccessToken(): string | null {
+        return this.getTokens()?.access_token || null;
+    }
+
+    isAuthenticated(): boolean {
+        return Boolean(this.getAccessToken());
     }
 }
 

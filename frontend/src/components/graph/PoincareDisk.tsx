@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useEffect, useRef, useState, useId, useCallback } from "react";
 import { graphApi, GraphNeighborhood, GraphFilters } from "@/lib/api/graph";
@@ -39,7 +40,7 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
     useEffect(() => {
         const loadJit = async () => {
             try {
-                // @ts-ignore
+                // @ts-expect-error JIT library ships without TypeScript declarations.
                 await import('@/lib/jit');
                 if (window.$jit) {
                     setJitLoaded(true);
@@ -62,8 +63,8 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
 
         try {
             // Check authentication before API call
-            const tokens = authService.getUser();
-            if (!tokens) {
+            const accessToken = authService.getAccessToken();
+            if (!accessToken) {
                 return null;
             }
             setLoading(true);
@@ -127,8 +128,8 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
         if (previousCenter === '__root__') {
             // Go back to root - reload the JIT tree
             try {
-                const tokens = authService.getUser();
-                if (!tokens) {
+                const accessToken = authService.getAccessToken();
+                if (!accessToken) {
                     return; // Skip if not authenticated
                 }
                 const jitTree = await graphApi.getJITTree(filters);
@@ -167,6 +168,11 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
 
             const w = infovis.offsetWidth - 50;
             const h = infovis.offsetHeight - 50;
+            const rootStyles = getComputedStyle(document.documentElement);
+            const textColor = rootStyles.getPropertyValue("--text-primary").trim() || "#ecf6ff";
+            const subtleTextColor = rootStyles.getPropertyValue("--text-secondary").trim() || "rgba(236, 246, 255, 0.75)";
+            const borderColor = rootStyles.getPropertyValue("--border").trim() || "rgba(139, 177, 212, 0.2)";
+            const accentColor = rootStyles.getPropertyValue("--accent").trim() || "#6dff9a";
 
             // Create Hypertree instance with Swiss design styling
             const ht = new window.$jit.Hypertree({
@@ -181,7 +187,7 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                 },
                 Edge: {
                     lineWidth: 1.5,
-                    color: "#555555",  // Muted gray for Swiss style
+                    color: SWISS_COLORS.relatedTo,
                     overridable: true
                 },
                 onBeforeCompute: function (node: any) {
@@ -241,13 +247,13 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                     const style = domElement.style;
                     style.display = "";
                     style.cursor = "pointer";
-                    style.color = "#FFFFFF";
-                    style.fontFamily = "'SF Pro Display', 'Inter', -apple-system, sans-serif";
+                    style.color = textColor;
+                    style.fontFamily = "var(--font-ui), 'Space Grotesk', -apple-system, sans-serif";
                     style.fontSize = "12px";
                     style.fontWeight = "500";
                     style.letterSpacing = "-0.01em";
                     style.pointerEvents = "auto";
-                    style.textShadow = "0 1px 3px rgba(0,0,0,0.9)";
+                    style.textShadow = "0 1px 2px rgba(0, 0, 0, 0.45)";
 
                     // Style the relationship type label
                     const relTypeEl = domElement.querySelector('.rel-type') as HTMLElement;
@@ -255,7 +261,7 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                         relTypeEl.style.display = 'block';
                         relTypeEl.style.fontSize = '9px';
                         relTypeEl.style.fontWeight = '400';
-                        relTypeEl.style.color = 'rgba(255,255,255,0.5)';
+                        relTypeEl.style.color = subtleTextColor;
                         relTypeEl.style.marginTop = '2px';
                     }
 
@@ -265,7 +271,7 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                         drillHint.style.display = 'inline';
                         drillHint.style.marginLeft = '4px';
                         drillHint.style.fontSize = '10px';
-                        drillHint.style.color = 'rgba(10, 132, 255, 0.8)';
+                        drillHint.style.color = accentColor;
                     }
                     
                     // Style the child count badge
@@ -275,8 +281,8 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                         childCountEl.style.marginLeft = '6px';
                         childCountEl.style.fontSize = '9px';
                         childCountEl.style.fontWeight = '600';
-                        childCountEl.style.color = 'rgba(255,255,255,0.7)';
-                        childCountEl.style.backgroundColor = 'rgba(255,255,255,0.15)';
+                        childCountEl.style.color = textColor;
+                        childCountEl.style.backgroundColor = borderColor;
                         childCountEl.style.padding = '1px 5px';
                         childCountEl.style.borderRadius = '8px';
                     }
@@ -355,17 +361,17 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
             // Load initial data - backend now returns JIT-compatible tree structure directly
             try {
                 // Check if user is authenticated before making API call
-                const tokens = authService.getUser();
-                if (!tokens) {
+                const accessToken = authService.getAccessToken();
+                if (!accessToken) {
                     // User not authenticated, show empty state
                     const emptyState = {
                         id: 'empty',
                         name: 'No Data',
-                        data: { $color: '#4B5563', $dim: 20 },
+                        data: { $color: SWISS_COLORS.chunk, $dim: 20 },
                         children: [{
                             id: 'hint',
                             name: 'Please log in to view your graph',
-                            data: { $color: '#6B7280', $dim: 10 },
+                            data: { $color: SWISS_COLORS.relatedTo, $dim: 10 },
                             children: []
                         }]
                     };
@@ -405,11 +411,11 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                         const emptyState = {
                             id: 'empty',
                             name: 'No Data',
-                            data: { $color: '#4B5563', $dim: 20 },
+                            data: { $color: SWISS_COLORS.chunk, $dim: 20 },
                             children: [{
                                 id: 'hint',
                                 name: 'Ingest content to build your graph',
-                                data: { $color: '#6B7280', $dim: 10 },
+                                data: { $color: SWISS_COLORS.relatedTo, $dim: 10 },
                                 children: []
                             }]
                         };
@@ -424,11 +430,11 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                     const emptyState = {
                         id: 'empty',
                         name: 'No Data',
-                        data: { $color: '#4B5563', $dim: 20 },
+                        data: { $color: SWISS_COLORS.chunk, $dim: 20 },
                         children: [{
                             id: 'hint',
                             name: 'Please log in to view your graph',
-                            data: { $color: '#6B7280', $dim: 10 },
+                            data: { $color: SWISS_COLORS.relatedTo, $dim: 10 },
                             children: []
                         }]
                     };
@@ -439,7 +445,7 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
                     const emptyState = {
                         id: 'empty',
                         name: 'Error loading graph',
-                        data: { $color: '#EF4444', $dim: 20 },
+                        data: { $color: SWISS_COLORS.oppositeOf, $dim: 20 },
                         children: []
                     };
                     ht.loadJSON(emptyState);
@@ -466,22 +472,22 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
     }, [jitLoaded, fetchNeighborhood, currentCenter, handleNodeClick, filters]);
 
     return (
-        <div className={`relative w-full h-full bg-[#1C1C1E] overflow-hidden ${className || ''}`}>
+        <div className={`relative w-full h-full bg-[var(--canvas)] app-grid-bg overflow-hidden ${className || ''}`}>
             {/* Background Gradient */}
-            <div className="absolute inset-0 bg-gradient-to-br from-black/50 to-transparent pointer-events-none" />
+            <div className="absolute inset-0 bg-gradient-to-br from-[var(--surface)] via-transparent to-transparent pointer-events-none" />
 
             {/* Navigation Controls */}
             <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
                 {navigationStack.length > 0 && (
                     <button
                         onClick={handleGoBack}
-                        className="bg-white/10 backdrop-blur-md text-white/90 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10 hover:bg-white/20 transition-colors flex items-center gap-1"
+                        className="border border-border bg-surface px-3 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-[var(--hover-bg)] transition-colors flex items-center gap-1"
                     >
                         ← Back
                     </button>
                 )}
                 {currentCenter && (
-                    <span className="text-white/60 text-xs bg-black/30 px-2 py-1 rounded">
+                    <span className="text-secondary text-xs bg-surface px-2 py-1 rounded border border-border">
                         Viewing: {currentCenter}
                     </span>
                 )}
@@ -498,8 +504,8 @@ export function PoincareDisk({ centerNode: initialCenterNode, userName, onNodeCl
 
             {/* Loading State */}
             {(!jitLoaded || loading) && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-30">
-                    <div className="text-white/80 flex items-center gap-2">
+                <div className="absolute inset-0 flex items-center justify-center bg-canvas/60 z-30">
+                    <div className="text-primary flex items-center gap-2">
                         <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />

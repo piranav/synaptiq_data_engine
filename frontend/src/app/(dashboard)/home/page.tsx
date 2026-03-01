@@ -94,7 +94,7 @@ export default function HomePage() {
                             <p className="text-[22px] font-semibold tracking-tight text-primary">{dayLabel}, {monthLabel}</p>
                             <p className="text-sm text-secondary mt-1">Knowledge workspace snapshot</p>
                         </div>
-                        <button className="md:ml-auto dashboard-pill px-4 h-10 text-sm font-medium text-white bg-accent border-accent hover:bg-[var(--accent-hover)] transition-colors">
+                        <button className="md:ml-auto dashboard-pill px-4 h-10 text-sm font-medium text-[var(--accent)] bg-[var(--accent-soft)] border-accent/35 hover:bg-[var(--hover-bg)] transition-colors">
                             Show tasks
                             <ArrowRight className="w-4 h-4 ml-2" />
                         </button>

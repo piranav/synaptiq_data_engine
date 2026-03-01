@@ -89,8 +89,7 @@ export function MarkdownMessage({ content, className, citationAnchorPrefix }: Ma
                             return (
                                 <pre
                                     className={clsx(
-                                        "my-2 overflow-x-auto rounded-md border border-border p-3",
-                                        resolvedTheme === "dark" ? "bg-[#02050A]/80" : "bg-[#f4f6fb]"
+                                        "my-2 overflow-x-auto rounded-md border border-border p-3 bg-canvas/70"
                                     )}
                                 >
                                     <code className={clsx("font-mono text-[12px] text-primary/90", codeClass)} {...props}>

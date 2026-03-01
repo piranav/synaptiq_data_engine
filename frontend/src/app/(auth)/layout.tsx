@@ -2,71 +2,49 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
 export default function AuthLayout({
-    children,
+  children,
 }: {
-    children: React.ReactNode;
+  children: React.ReactNode;
 }) {
-    return (
-        <div className="flex min-h-screen w-full">
-            {/* Left Panel - Visual */}
-            <div className="hidden lg:flex w-1/2 bg-[#0A0A0A] relative flex-col items-center justify-center p-12 text-white overflow-hidden">
-                {/* Decorative dots pattern */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="relative w-[400px] h-[400px]">
-                        {/* Animated orbital dots */}
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="w-64 h-64 rounded-full border border-white/5" />
-                        </div>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="w-48 h-48 rounded-full border border-white/5" />
-                        </div>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="w-32 h-32 rounded-full border border-white/5" />
-                        </div>
+  return (
+    <div className="flex min-h-screen w-full bg-[var(--canvas)] app-grid-bg">
+      <div className="hidden lg:flex w-1/2 relative flex-col items-center justify-center p-12 overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(111,224,255,0.12),transparent_35%),radial-gradient(circle_at_80%_78%,rgba(255,191,95,0.12),transparent_40%)]" />
 
-                        {/* Glowing dots */}
-                        <div className="absolute top-1/4 left-1/4 w-2 h-2 bg-accent rounded-full shadow-lg shadow-accent/50 animate-pulse" />
-                        <div className="absolute top-1/3 right-1/3 w-3 h-3 bg-node-concept rounded-full shadow-lg shadow-node-concept/50 animate-pulse" style={{ animationDelay: '0.5s' }} />
-                        <div className="absolute bottom-1/3 left-1/3 w-2.5 h-2.5 bg-node-source rounded-full shadow-lg shadow-node-source/50 animate-pulse" style={{ animationDelay: '1s' }} />
-                        <div className="absolute bottom-1/4 right-1/4 w-2 h-2 bg-node-definition rounded-full shadow-lg shadow-node-definition/50 animate-pulse" style={{ animationDelay: '1.5s' }} />
-                        <div className="absolute top-1/2 left-1/5 w-1.5 h-1.5 bg-white/60 rounded-full animate-pulse" style={{ animationDelay: '0.3s' }} />
-                        <div className="absolute top-2/5 right-1/5 w-1.5 h-1.5 bg-white/40 rounded-full animate-pulse" style={{ animationDelay: '0.8s' }} />
+        <div className="relative z-10 w-[460px] h-[460px] rounded-full border border-border bg-surface">
+          <div className="absolute inset-[15%] rounded-full border border-border-subtle" />
+          <div className="absolute inset-[30%] rounded-full border border-border-subtle" />
+          <div className="absolute inset-[45%] rounded-full border border-border-subtle" />
 
-                        {/* Center glow */}
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="w-4 h-4 bg-accent/80 rounded-full shadow-2xl shadow-accent/60" />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Quote */}
-                <div className="relative z-10 max-w-sm text-center mt-64">
-                    <blockquote className="text-title-3 text-white/90 font-light leading-relaxed">
-                        &ldquo;The most powerful tool for thought is the one that connects your ideas.&rdquo;
-                    </blockquote>
-                    <div className="mt-6 w-8 h-px bg-white/20 mx-auto" />
-                    <p className="mt-4 text-callout text-white/40">Synaptiq</p>
-                </div>
-            </div>
-
-            {/* Right Panel - Form */}
-            <div className="flex w-full lg:w-1/2 flex-col bg-surface relative">
-                <div className="absolute top-8 left-8">
-                    <Link href="/" className="inline-flex items-center text-secondary hover:text-primary transition-colors gap-2 text-body-small">
-                        <ArrowLeft className="w-4 h-4" />
-                        Back to Home
-                    </Link>
-                </div>
-
-                <div className="flex-1 flex flex-col justify-center px-8 sm:px-12 md:px-20 lg:px-[80px] pt-24 pb-8 max-w-[640px] mx-auto w-full">
-                    {children}
-                </div>
-
-                <div className="py-6 text-center text-callout text-tertiary">
-                    &copy; {new Date().getFullYear()} Synaptiq. All rights reserved.
-                </div>
-            </div>
+          <span className="absolute top-[22%] left-[26%] h-2.5 w-2.5 rounded-full bg-node-source shadow-[0_0_18px_rgba(109,255,154,0.45)]" />
+          <span className="absolute top-[36%] right-[24%] h-2 w-2 rounded-full bg-node-concept shadow-[0_0_18px_rgba(111,224,255,0.42)]" />
+          <span className="absolute bottom-[25%] left-[36%] h-2.5 w-2.5 rounded-full bg-node-definition shadow-[0_0_18px_rgba(255,191,95,0.45)]" />
+          <span className="absolute inset-[48%] h-4 w-4 rounded-full bg-[var(--accent)] shadow-[0_0_28px_rgba(109,255,154,0.42)]" />
         </div>
-    );
-}
 
+        <div className="relative z-10 max-w-sm text-center mt-12">
+          <blockquote className="text-title-3 text-primary font-medium leading-relaxed">
+            &quot;The most powerful tool for thought is the one that connects your ideas.&quot;
+          </blockquote>
+          <div className="mt-6 w-8 h-px bg-border mx-auto" />
+          <p className="mt-4 text-callout text-secondary">Synaptiq</p>
+        </div>
+      </div>
+
+      <div className="flex w-full lg:w-1/2 flex-col bg-surface/45 relative">
+        <div className="absolute top-8 left-8">
+          <Link href="/" className="inline-flex items-center text-secondary hover:text-primary transition-colors gap-2 text-body-small">
+            <ArrowLeft className="w-4 h-4" />
+            Back to Home
+          </Link>
+        </div>
+
+        <div className="flex-1 flex flex-col justify-center px-6 sm:px-10 md:px-16 lg:px-[72px] pt-24 pb-8 max-w-[640px] mx-auto w-full">
+          <div className="dashboard-card p-6 sm:p-8">{children}</div>
+        </div>
+
+        <div className="py-6 text-center text-callout text-tertiary">&copy; {new Date().getFullYear()} Synaptiq. All rights reserved.</div>
+      </div>
+    </div>
+  );
+}

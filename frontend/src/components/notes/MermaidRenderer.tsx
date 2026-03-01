@@ -14,18 +14,18 @@ function getThemeConfig(theme: "light" | "dark") {
         return {
             theme: "default" as const,
             themeVariables: {
-                primaryColor: "#256BEE",
-                primaryTextColor: "#0f172a",
-                primaryBorderColor: "#256BEE",
-                lineColor: "#256BEE",
-                secondaryColor: "#f6f8fb",
+                primaryColor: "#07b85b",
+                primaryTextColor: "#1a2433",
+                primaryBorderColor: "#07b85b",
+                lineColor: "#0aa7c5",
+                secondaryColor: "#f4f8fb",
                 tertiaryColor: "#ffffff",
                 background: "#ffffff",
-                mainBkg: "#f6f8fb",
-                nodeBorder: "#256BEE",
-                clusterBkg: "#f6f8fb",
-                clusterBorder: "#d2d8e1",
-                titleColor: "#0f172a",
+                mainBkg: "#f4f8fb",
+                nodeBorder: "#07b85b",
+                clusterBkg: "#f4f8fb",
+                clusterBorder: "#b9cfdb",
+                titleColor: "#1a2433",
                 edgeLabelBackground: "#ffffff",
             },
         };
@@ -34,19 +34,19 @@ function getThemeConfig(theme: "light" | "dark") {
     return {
         theme: "dark" as const,
         themeVariables: {
-            primaryColor: "#256BEE",
+            primaryColor: "#6dff9a",
             primaryTextColor: "#fff",
-            primaryBorderColor: "#60a5fa",
-            lineColor: "#60a5fa",
-            secondaryColor: "#1a1d24",
-            tertiaryColor: "#0B0D12",
-            background: "#0B0D12",
-            mainBkg: "#1a1d24",
-            nodeBorder: "#60a5fa",
-            clusterBkg: "#1a1d24",
-            clusterBorder: "#60a5fa",
+            primaryBorderColor: "#6fe0ff",
+            lineColor: "#6fe0ff",
+            secondaryColor: "#131c2a",
+            tertiaryColor: "#080d14",
+            background: "#080d14",
+            mainBkg: "#131c2a",
+            nodeBorder: "#6fe0ff",
+            clusterBkg: "#131c2a",
+            clusterBorder: "#6fe0ff",
             titleColor: "#fff",
-            edgeLabelBackground: "#1a1d24",
+            edgeLabelBackground: "#131c2a",
         },
     };
 }
@@ -110,7 +110,7 @@ export function MermaidRenderer({ code, className = "", theme = "dark" }: Mermai
     if (!svg) {
         return (
             <div className={`flex items-center justify-center h-32 ${className}`}>
-                <div className="text-white/40 text-[12px]">Rendering diagram...</div>
+                <div className="text-secondary text-[12px]">Rendering diagram...</div>
             </div>
         );
     }

@@ -44,7 +44,7 @@ export function SocialAuthButtons({ mode, onSuccess, onError }: SocialAuthButton
                 <Button
                     key={id}
                     variant="secondary"
-                    className="h-[52px] w-full justify-start gap-3 border-white/15 bg-white/[0.02] px-4 text-primary hover:border-white/30 hover:bg-white/[0.06]"
+                    className="h-[52px] w-full justify-start gap-3 border-border bg-surface px-4 text-primary hover:border-border-strong hover:bg-[var(--hover-bg)]"
                     isLoading={loadingProvider === id}
                     onClick={() => handleOAuth(id)}
                     disabled={Boolean(loadingProvider)}

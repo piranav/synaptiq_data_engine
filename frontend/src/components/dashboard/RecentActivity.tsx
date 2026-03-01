@@ -60,7 +60,7 @@ export function RecentActivity({ activities: incomingActivities, loading: incomi
     };
 
     return (
-        <section className="dashboard-card flex flex-col h-full rounded-[26px] p-5">
+        <section className="dashboard-card flex flex-col h-full rounded-[14px] p-5">
             <div className="flex items-center justify-between mb-5">
                 <h2 className="text-sm font-semibold text-primary">Recent Activity</h2>
                 <div className="flex items-center gap-2">
@@ -98,7 +98,7 @@ export function RecentActivity({ activities: incomingActivities, loading: incomi
                     const timeDisplay = formatTime(activity.time || new Date().toISOString());
 
                     return (
-                        <div key={activity.id} className="group flex items-start p-3 rounded-[16px] bg-elevated border border-border hover:shadow-card transition-all">
+                        <div key={activity.id} className="group flex items-start p-3 rounded-[10px] bg-elevated border border-border hover:shadow-card transition-all">
                             <div className={clsx("mt-0.5 flex-shrink-0", activity.status === "processing" && "animate-pulse")}>
                                 {activity.status === "failed" ? (
                                     <IconFrame icon={AlertCircle} tone="danger" size="sm" />

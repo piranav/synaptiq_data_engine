@@ -1,4 +1,5 @@
-import { GraphNeighborhood, RelationshipTarget } from "@/lib/api/graph";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { GraphNeighborhood } from "@/lib/api/graph";
 
 /**
  * JIT Hypertree Node structure
@@ -22,33 +23,28 @@ interface JITTreeNode {
     children: JITTreeNode[];
 }
 
-/**
- * Swiss Design Color Palette
- * Clean, semantic colors with high contrast and minimal distraction.
- * Inspired by Swiss/International Typographic Style.
- */
 const SWISS_COLORS = {
     // Node Entity Types
-    root: '#1A1A1A',           // Near-black for root
-    concept: '#0066CC',        // Primary blue for concepts
-    definition: '#CC3300',     // Accent red for definitions
-    source: '#339966',         // Green for sources
-    chunk: '#666666',          // Gray for chunks
+    root: '#1f2c3a',           // Deep slate for root
+    concept: '#6fe0ff',        // Cyan for concepts
+    definition: '#ffbf5f',     // Amber for definitions
+    source: '#6dff9a',         // Neon green for sources
+    chunk: '#8ca2b8',          // Muted cool gray for chunks
 
     // Source Type Variants
-    youtube: '#FF0000',        // YouTube red
-    web_article: '#4285F4',    // Google blue
-    note: '#FFC107',           // Amber/yellow for notes
-    pdf: '#FF5722',            // Deep orange for PDFs
-    podcast: '#9C27B0',        // Purple for podcasts
+    youtube: '#ff855e',
+    web_article: '#6fe0ff',
+    note: '#ffbf5f',
+    pdf: '#ff9d68',
+    podcast: '#6dff9a',
 
     // Relationship Types (for future edge coloring)
-    isA: '#4A4A4A',            // Hierarchy - dark gray
-    partOf: '#0052A3',         // Composition - dark blue
-    prerequisiteFor: '#CC7700', // Learning path - orange
-    relatedTo: '#888888',      // Association - medium gray
-    oppositeOf: '#CC0033',     // Contrast - red
-    usedIn: '#339966',         // Usage - green
+    isA: '#8ca2b8',
+    partOf: '#6fe0ff',
+    prerequisiteFor: '#ff9d68',
+    relatedTo: '#9cb3c7',
+    oppositeOf: '#ff855e',
+    usedIn: '#6dff9a',
 };
 
 /**
@@ -225,7 +221,7 @@ export function transformToJITFormat(
             id: 'empty_placeholder',
             name: 'No connections yet',
             data: {
-                $color: '#4B5563',
+                $color: SWISS_COLORS.chunk,
                 $dim: 8,
                 nodeType: 'instance',
                 entityType: 'concept',

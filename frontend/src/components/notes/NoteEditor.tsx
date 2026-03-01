@@ -17,11 +17,6 @@ import { common, createLowlight } from "lowlight";
 import type { Content, JSONContent } from "@tiptap/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-    Bold,
-    Italic,
-    Underline as UnderlineIcon,
-    Strikethrough,
-    Code,
     Heading1,
     Heading2,
     Heading3,
@@ -30,7 +25,6 @@ import {
     CheckSquare,
     Quote,
     Minus,
-    Link as LinkIcon,
     Table as TableIcon,
     Image as ImageIcon,
     Code2,
@@ -109,12 +103,12 @@ export function NoteEditor({
             TableRow,
             TableCell.configure({
                 HTMLAttributes: {
-                    class: "border border-white/10 p-2 min-w-[100px]",
+                    class: "border border-border p-2 min-w-[100px]",
                 },
             }),
             TableHeader.configure({
                 HTMLAttributes: {
-                    class: "border border-white/10 p-2 bg-white/5 font-medium",
+                    class: "border border-border p-2 bg-elevated font-medium",
                 },
             }),
             TaskList.configure({
@@ -136,7 +130,7 @@ export function NoteEditor({
             CodeBlockLowlight.configure({
                 lowlight,
                 HTMLAttributes: {
-                    class: "rounded-md bg-black/40 p-4 font-mono text-sm overflow-x-auto",
+                    class: "rounded-md bg-canvas/60 p-4 font-mono text-sm overflow-x-auto",
                 },
             }),
         ],
@@ -149,7 +143,7 @@ export function NoteEditor({
         },
         editorProps: {
             attributes: {
-                class: "prose prose-invert prose-sm max-w-none focus:outline-none min-h-[200px]",
+                class: "prose prose-sm max-w-none focus:outline-none min-h-[200px] text-primary",
             },
             handleDrop: (view, event, slice, moved) => {
                 if (!moved && event.dataTransfer?.files.length) {
@@ -237,7 +231,7 @@ export function NoteEditor({
     return (
         <div className={`note-editor relative ${className}`}>
             {/* Fixed Toolbar */}
-            <div className="sticky top-0 z-10 flex items-center gap-0.5 p-2 border-b border-white/10 bg-[#0B0D12]/90 backdrop-blur">
+            <div className="sticky top-0 z-10 flex items-center gap-0.5 p-2 border-b border-border bg-canvas/90 backdrop-blur">
                 <ToolbarButton
                     onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
                     isActive={editor.isActive("heading", { level: 1 })}
@@ -260,7 +254,7 @@ export function NoteEditor({
                     <Heading3 className="h-4 w-4" />
                 </ToolbarButton>
 
-                <div className="w-px h-4 bg-white/10 mx-1" />
+                <div className="w-px h-4 bg-elevated mx-1" />
 
                 <ToolbarButton
                     onClick={() => editor.chain().focus().toggleBulletList().run()}
@@ -284,7 +278,7 @@ export function NoteEditor({
                     <CheckSquare className="h-4 w-4" />
                 </ToolbarButton>
 
-                <div className="w-px h-4 bg-white/10 mx-1" />
+                <div className="w-px h-4 bg-elevated mx-1" />
 
                 <ToolbarButton
                     onClick={() => editor.chain().focus().toggleBlockquote().run()}
@@ -307,7 +301,7 @@ export function NoteEditor({
                     <Code2 className="h-4 w-4" />
                 </ToolbarButton>
 
-                <div className="w-px h-4 bg-white/10 mx-1" />
+                <div className="w-px h-4 bg-elevated mx-1" />
 
                 <ToolbarButton onClick={handleInsertTable} title="Insert Table">
                     <TableIcon className="h-4 w-4" />
@@ -328,7 +322,7 @@ export function NoteEditor({
                     <ImageIcon className="h-4 w-4" />
                 </ToolbarButton>
 
-                <div className="w-px h-4 bg-white/10 mx-1" />
+                <div className="w-px h-4 bg-elevated mx-1" />
 
                 {/* More menu */}
                 <div className="relative">
@@ -349,7 +343,7 @@ export function NoteEditor({
             {showInsertMenu && (
                 <div
                     ref={insertMenuRef}
-                    className="fixed z-50 w-48 rounded-lg border border-white/10 bg-[#1a1d24] p-1 shadow-elevated"
+                    className="fixed z-50 w-48 rounded-lg border border-border bg-surface p-1 shadow-elevated"
                     style={{ left: insertMenuPosition.x, top: insertMenuPosition.y }}
                 >
                     <InsertMenuItem
@@ -387,7 +381,7 @@ export function NoteEditor({
                 .note-editor .is-editor-empty:first-child::before {
                     content: attr(data-placeholder);
                     float: left;
-                    color: rgba(255, 255, 255, 0.4);
+                    color: var(--text-tertiary);
                     pointer-events: none;
                     height: 0;
                 }
@@ -440,26 +434,26 @@ export function NoteEditor({
                     border-left: 3px solid var(--accent);
                     padding-left: 1rem;
                     font-style: italic;
-                    color: rgba(255, 255, 255, 0.8);
+                    color: var(--text-secondary);
                     margin: 1rem 0;
                 }
                 
                 .note-editor .ProseMirror hr {
                     border: none;
-                    border-top: 1px solid rgba(255, 255, 255, 0.1);
+                    border-top: 1px solid var(--border);
                     margin: 1.5rem 0;
                 }
                 
                 .note-editor .ProseMirror code {
-                    background: rgba(255, 255, 255, 0.1);
+                    background: var(--elevated);
                     padding: 0.2rem 0.4rem;
                     border-radius: 4px;
-                    font-family: 'SF Mono', ui-monospace, monospace;
+                    font-family: var(--font-mono);
                     font-size: 0.9em;
                 }
                 
                 .note-editor .ProseMirror pre {
-                    background: rgba(0, 0, 0, 0.4);
+                    background: color-mix(in srgb, var(--canvas) 82%, transparent);
                     border-radius: 8px;
                     padding: 1rem;
                     margin: 1rem 0;
@@ -479,13 +473,13 @@ export function NoteEditor({
                 
                 .note-editor .ProseMirror th,
                 .note-editor .ProseMirror td {
-                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border: 1px solid var(--border);
                     padding: 0.5rem;
                     text-align: left;
                 }
                 
                 .note-editor .ProseMirror th {
-                    background: rgba(255, 255, 255, 0.05);
+                    background: var(--elevated);
                     font-weight: 500;
                 }
                 
@@ -535,7 +529,7 @@ function ToolbarButton({
                 transition-colors
                 ${isActive
                     ? "bg-accent/20 text-accent"
-                    : "text-white/70 hover:text-white hover:bg-white/10"
+                    : "text-secondary hover:text-primary hover:bg-elevated"
                 }
             `}
         >
@@ -557,7 +551,7 @@ function InsertMenuItem({
     return (
         <button
             onClick={onClick}
-            className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] text-white/80 hover:bg-white/10 hover:text-white"
+            className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-[13px] text-primary hover:bg-elevated hover:text-primary"
         >
             {icon}
             <span>{label}</span>
@@ -598,8 +592,8 @@ function MermaidPreview({ editor }: { editor: ReturnType<typeof useEditor> }) {
     return (
         <div className="px-4 pb-4 space-y-4">
             {mermaidBlocks.map((block) => (
-                <div key={block.id} className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-                    <div className="text-[11px] text-white/50 uppercase tracking-wider mb-2">
+                <div key={block.id} className="rounded-lg border border-border bg-surface p-4">
+                    <div className="text-[11px] text-tertiary uppercase tracking-wider mb-2">
                         Mermaid Preview
                     </div>
                     <MermaidRenderer code={block.code} />

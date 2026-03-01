@@ -128,9 +128,9 @@ class YouTubeAdapter(BaseAdapter):
 
     def _fetch_transcript(self, url: str) -> dict[str, Any]:
         """Fetch transcript from SUPADATA (sync, run in thread)."""
-        # Use text=False to get timestamped segments
-        # Note: url is positional argument in SUPADATA SDK
-        result = self.client.youtube.transcript(url, text=False)
+        # Use text=False to get timestamped segments.
+        # lang="en" requests English; if unavailable, API returns first available (see docs.supadata.ai).
+        result = self.client.youtube.transcript(url, text=False, lang="en")
         
         # Convert to dict format
         return {

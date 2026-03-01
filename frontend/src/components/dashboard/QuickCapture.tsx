@@ -17,7 +17,7 @@ export function QuickCapture() {
     return (
         <section className="relative">
             <div
-                className="dashboard-card rounded-[28px] p-2.5 md:p-3 flex items-center transition-all duration-300 hover:shadow-hover cursor-text"
+                className="dashboard-card rounded-[14px] p-2.5 md:p-3 flex items-center transition-all duration-300 hover:shadow-hover cursor-text"
                 onClick={handleWrapperClick}
             >
                 <div className="pl-1 pr-2">
