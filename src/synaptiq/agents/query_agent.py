@@ -144,15 +144,11 @@ class QueryAgent:
         if not model_id:
             model_id = "gpt-4.1"
         
-        ANTHROPIC_MODELS = {
-            "claude-sonnet-4-20250514",
-            "claude-3-5-haiku-20241022",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-opus-20240229",
-        }
-        
-        if model_id in ANTHROPIC_MODELS or model_id.startswith("claude"):
+        if model_id.startswith("claude"):
+            # Try user key first, then system-level fallback from env
             api_key = (user_api_keys or {}).get("anthropic", "")
+            if not api_key:
+                api_key = _settings.anthropic_api_key or ""
             if not api_key:
                 raise ValueError(
                     "An Anthropic API key is required to use Claude models. "

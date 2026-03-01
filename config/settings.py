@@ -25,6 +25,11 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = Field(..., description="OpenAI API key")
+    
+    # Anthropic (system-level fallback; users can override in their settings)
+    anthropic_api_key: Optional[str] = Field(
+        default=None, description="Anthropic API key (system-level fallback)"
+    )
 
     # Qdrant
     qdrant_url: str = Field(..., description="Qdrant Cloud URL")

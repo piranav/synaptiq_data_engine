@@ -279,12 +279,16 @@ class ModelInfo(BaseModel):
 
 
 AVAILABLE_MODELS = [
-    ModelInfo(id="gpt-4.1", name="GPT-4.1", provider="openai", description="Fast, versatile model from OpenAI", requires_key=False),
-    ModelInfo(id="gpt-4.1-mini", name="GPT-4.1 Mini", provider="openai", description="Lightweight, cost-effective OpenAI model", requires_key=False),
-    ModelInfo(id="gpt-4.1-nano", name="GPT-4.1 Nano", provider="openai", description="Fastest, most affordable OpenAI model", requires_key=False),
-    ModelInfo(id="o4-mini", name="o4-mini", provider="openai", description="OpenAI reasoning model — compact", requires_key=False),
-    ModelInfo(id="claude-sonnet-4-20250514", name="Claude Sonnet 4", provider="anthropic", description="Balanced performance and speed from Anthropic", requires_key=True),
-    ModelInfo(id="claude-3-5-haiku-20241022", name="Claude 3.5 Haiku", provider="anthropic", description="Fast, lightweight Anthropic model", requires_key=True),
+    # OpenAI GPT models
+    ModelInfo(id="gpt-4.1", name="GPT-4.1", provider="openai", description="Fast, versatile flagship model", requires_key=False),
+    ModelInfo(id="gpt-4.1-mini", name="GPT-4.1 Mini", provider="openai", description="Lightweight, cost-effective model", requires_key=False),
+    ModelInfo(id="gpt-4.1-nano", name="GPT-4.1 Nano", provider="openai", description="Fastest, most affordable model", requires_key=False),
+    # OpenAI reasoning / thinking models
+    ModelInfo(id="o3-pro", name="o3-pro", provider="openai", description="Most powerful reasoning model — thinks longer", requires_key=False),
+    ModelInfo(id="o4-mini", name="o4-mini", provider="openai", description="Fast reasoning model — math & code", requires_key=False),
+    # Anthropic Claude models
+    ModelInfo(id="claude-sonnet-4-6", name="Claude Sonnet 4.6", provider="anthropic", description="Latest balanced Anthropic model", requires_key=True),
+    ModelInfo(id="claude-haiku-4-5", name="Claude Haiku 4.5", provider="anthropic", description="Fast, lightweight Anthropic model", requires_key=True),
 ]
 
 
@@ -302,10 +306,16 @@ async def list_models(
 
     Anthropic models require the user to have set their own API key.
     """
+    from config.settings import get_settings
+    app_settings = get_settings()
+    
     user_service = UserService(session)
     settings = await user_service.get_user_settings(user.id)
     
-    has_anthropic_key = bool(settings and settings.anthropic_api_key)
+    has_anthropic_key = bool(
+        (settings and settings.anthropic_api_key)
+        or app_settings.anthropic_api_key
+    )
     
     models = []
     for model in AVAILABLE_MODELS:
