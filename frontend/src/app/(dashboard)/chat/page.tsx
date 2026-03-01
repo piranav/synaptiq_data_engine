@@ -3,7 +3,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MessageSquare, Loader2, PanelRightOpen, X } from "lucide-react";
 import { chatService, type Conversation, type Message } from "@/lib/api/chat";
-import { ConversationList, ChatComposer, MessageBubble, ChatContextPanel } from "@/components/chat";
+import { userService, type ChatModel } from "@/lib/api/user";
+import { ConversationList, ChatComposer, MessageBubble, ChatContextPanel, ModelSelector, type ModelOption } from "@/components/chat";
+
+const DEFAULT_MODEL_ID = "gpt-5.2";
 
 export default function ChatPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -15,10 +18,19 @@ export default function ChatPage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showContextDrawer, setShowContextDrawer] = useState(false);
 
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState(DEFAULT_MODEL_ID);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    userService.listModels().then((m) => {
+      if (m && m.length > 0) setModels(m);
+    }).catch(() => {});
   }, []);
 
   const loadConversations = useCallback(async () => {
@@ -92,7 +104,7 @@ export default function ChatPage() {
     }
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, modelId: string) => {
     let conversationId = activeConversationId;
     if (!conversationId) {
       try {
@@ -109,7 +121,7 @@ export default function ChatPage() {
     setIsSending(true);
 
     try {
-      const response = await chatService.sendMessage(conversationId, content);
+      const response = await chatService.sendMessage(conversationId, content, modelId);
       setMessages((prev) => [...prev, response.user_message, response.assistant_message]);
 
       setConversations((prev) =>
@@ -199,7 +211,14 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <ChatComposer onSend={handleSendMessage} isSending={isSending} className="mx-auto max-w-[840px]" />
+            <ChatComposer
+              onSend={handleSendMessage}
+              isSending={isSending}
+              className="mx-auto max-w-[840px]"
+              models={models}
+              selectedModelId={selectedModelId}
+              onModelChange={setSelectedModelId}
+            />
           </>
         ) : (
           <div className="flex-1 w-full flex flex-col items-center justify-center text-center px-6">
@@ -207,9 +226,18 @@ export default function ChatPage() {
               <MessageSquare className="w-8 h-8 text-[var(--accent)]" strokeWidth={1.5} />
             </div>
             <h2 className="text-[24px] leading-[28px] font-semibold text-primary mb-2">Ask anything</h2>
-            <p className="text-[13px] leading-[18px] text-secondary max-w-md mb-8">
+            <p className="text-[13px] leading-[18px] text-secondary max-w-md mb-6">
               Query your knowledge base in natural language. Get answers with citations from your sources.
             </p>
+            {models.length > 0 && (
+              <div className="mb-6">
+                <ModelSelector
+                  models={models}
+                  selectedModelId={selectedModelId}
+                  onSelect={setSelectedModelId}
+                />
+              </div>
+            )}
             <button
               onClick={handleNewConversation}
               className="h-10 px-6 border border-accent/35 bg-[var(--accent-soft)] hover:bg-[var(--hover-bg)] text-[var(--accent)] rounded-md text-[13px] leading-[18px] font-medium transition-colors"

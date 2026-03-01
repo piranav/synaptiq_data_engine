@@ -3,21 +3,28 @@
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import clsx from "clsx";
+import { ModelSelector, type ModelOption } from "./ModelSelector";
 
 interface ChatComposerProps {
-  onSend: (content: string) => void;
+  onSend: (content: string, modelId: string) => void;
   isSending: boolean;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
+  models: ModelOption[];
+  selectedModelId: string;
+  onModelChange: (modelId: string) => void;
 }
 
 export function ChatComposer({
   onSend,
   isSending,
   disabled = false,
-  placeholder = "Ask anything…",
+  placeholder = "Ask anything\u2026",
   className,
+  models,
+  selectedModelId,
+  onModelChange,
 }: ChatComposerProps) {
   const [content, setContent] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -34,7 +41,7 @@ export function ChatComposer({
   const handleSend = () => {
     const trimmed = content.trim();
     if (!trimmed || isSending || disabled) return;
-    onSend(trimmed);
+    onSend(trimmed, selectedModelId);
     setContent("");
   };
 
@@ -69,9 +76,15 @@ export function ChatComposer({
               className="w-full bg-transparent outline-none resize-none text-[13px] leading-[18px] text-primary placeholder:text-secondary min-h-[26px] max-h-[120px]"
             />
             <div className="mt-1 flex items-center gap-4">
+              <ModelSelector
+                models={models}
+                selectedModelId={selectedModelId}
+                onSelect={onModelChange}
+                disabled={isSending}
+              />
               <div className="flex items-center gap-1 text-[12px] leading-[16px] text-secondary">
                 <Sparkles className="h-3.5 w-3.5" strokeWidth={1.5} />
-                <span>Enter to send · Shift+Enter newline</span>
+                <span>Enter to send</span>
               </div>
             </div>
           </div>

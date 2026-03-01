@@ -76,6 +76,10 @@ class MessageRequest(BaseModel):
         min_length=1,
         max_length=10000,
     )
+    model_id: Optional[str] = Field(
+        None,
+        description="LLM model identifier (e.g. 'gpt-5.2', 'claude-4.6-sonnet')",
+    )
 
 
 class CitationResponse(BaseModel):
@@ -128,8 +132,37 @@ class ChatResponse(BaseModel):
 async def get_chat_service(
     session: AsyncSession = Depends(get_async_session),
 ) -> ChatService:
-    """Get ChatService instance."""
+    """Get ChatService instance (model resolved per-request in handlers)."""
     return ChatService(session)
+
+
+async def _resolve_chat_service(
+    session: AsyncSession,
+    user: "User",
+    model_id: Optional[str] = None,
+) -> ChatService:
+    """Build a ChatService wired to the correct LLM provider."""
+    from synaptiq.services.user_service import UserService
+    from synaptiq.agents.model_config import get_model_info
+
+    info = get_model_info(model_id or "gpt-5.2")
+    anthropic_key: Optional[str] = None
+
+    if info.provider == "anthropic":
+        user_svc = UserService(session)
+        keys = await user_svc.get_decrypted_api_keys(user.id)
+        anthropic_key = keys.get("anthropic_api_key")
+        if not anthropic_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Anthropic API key not configured. Add it in Settings → API Keys.",
+            )
+
+    return ChatService(
+        session,
+        model_id=model_id,
+        anthropic_api_key=anthropic_key,
+    )
 
 
 # =============================================================================
@@ -361,7 +394,7 @@ async def send_message(
     conversation_id: str,
     body: MessageRequest,
     user: User = Depends(get_current_user),
-    chat_service: ChatService = Depends(get_chat_service),
+    session: AsyncSession = Depends(get_async_session),
 ) -> ChatResponse:
     """
     Send a message to the conversation and get an AI response.
@@ -378,9 +411,11 @@ async def send_message(
         conversation_id=conversation_id,
         user_id=user.id,
         content_length=len(body.content),
+        model_id=body.model_id,
     )
     
     try:
+        chat_service = await _resolve_chat_service(session, user, body.model_id)
         user_message, assistant_message = await chat_service.send_message(
             user_id=user.id,
             conversation_id=conversation_id,
@@ -437,7 +472,7 @@ async def send_message_stream(
     conversation_id: str,
     body: MessageRequest,
     user: User = Depends(get_current_user),
-    chat_service: ChatService = Depends(get_chat_service),
+    session: AsyncSession = Depends(get_async_session),
 ):
     """
     Send a message and stream the AI response.
@@ -448,10 +483,12 @@ async def send_message_stream(
     - `done`: When response is complete
     - `error`: If an error occurs
     """
+    chat_service = await _resolve_chat_service(session, user, body.model_id)
     logger.info(
         "Streaming message",
         conversation_id=conversation_id,
         user_id=user.id,
+        model_id=body.model_id,
     )
     
     async def event_generator():
@@ -554,6 +591,10 @@ class QuickChatRequest(BaseModel):
         None,
         description="Existing conversation ID (creates new if not provided)",
     )
+    model_id: Optional[str] = Field(
+        None,
+        description="LLM model identifier",
+    )
 
 
 @router.post(
@@ -564,7 +605,7 @@ class QuickChatRequest(BaseModel):
 async def quick_chat(
     body: QuickChatRequest,
     user: User = Depends(get_current_user),
-    chat_service: ChatService = Depends(get_chat_service),
+    session: AsyncSession = Depends(get_async_session),
 ) -> ChatResponse:
     """
     Quick chat endpoint - creates a conversation if needed.
@@ -575,6 +616,7 @@ async def quick_chat(
     
     For more control, use the conversation endpoints directly.
     """
+    chat_service = await _resolve_chat_service(session, user, body.model_id)
     conversation_id = body.conversation_id
     
     # Create conversation if not provided
@@ -626,6 +668,32 @@ async def quick_chat(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process chat: {str(e)}",
         )
+
+
+# =============================================================================
+# MODEL LISTING
+# =============================================================================
+
+
+@router.get(
+    "/models",
+    summary="List available LLM models",
+)
+async def list_models():
+    """Return the catalogue of available chat models."""
+    from synaptiq.agents.model_config import AVAILABLE_MODELS
+
+    return {
+        "models": [
+            {
+                "id": m.id,
+                "display_name": m.display_name,
+                "provider": m.provider,
+                "is_reasoning": m.is_reasoning,
+            }
+            for m in AVAILABLE_MODELS
+        ]
+    }
 
 
 # =============================================================================

@@ -181,6 +181,102 @@ class UserService:
         
         return await self.get_user_settings(user_id)
     
+    async def save_api_keys(
+        self,
+        user_id: str,
+        openai_api_key: Optional[str] = None,
+        anthropic_api_key: Optional[str] = None,
+    ) -> dict:
+        """
+        Encrypt and persist user-supplied API keys.
+
+        Passing an empty string for a key clears it.
+        Passing None leaves it unchanged.
+        """
+        from synaptiq.services.encryption import encrypt_api_key, mask_api_key
+
+        updates: dict = {}
+        if openai_api_key is not None:
+            updates["encrypted_openai_api_key"] = (
+                encrypt_api_key(openai_api_key) if openai_api_key else None
+            )
+        if anthropic_api_key is not None:
+            updates["encrypted_anthropic_api_key"] = (
+                encrypt_api_key(anthropic_api_key) if anthropic_api_key else None
+            )
+
+        if not updates:
+            return await self.get_api_keys_masked(user_id)
+
+        settings = await self.get_user_settings(user_id)
+        if not settings:
+            settings = UserSettings(user_id=user_id, **updates)
+            self.session.add(settings)
+        else:
+            await self.session.execute(
+                update(UserSettings)
+                .where(UserSettings.user_id == user_id)
+                .values(**updates)
+            )
+
+        return await self.get_api_keys_masked(user_id)
+
+    async def get_api_keys_masked(self, user_id: str) -> dict:
+        """Return masked versions of stored API keys (safe for display)."""
+        from synaptiq.services.encryption import decrypt_api_key, mask_api_key
+
+        settings = await self.get_user_settings(user_id)
+
+        result = {
+            "openai_api_key_set": False,
+            "openai_api_key_masked": "",
+            "anthropic_api_key_set": False,
+            "anthropic_api_key_masked": "",
+        }
+
+        if settings:
+            if settings.encrypted_openai_api_key:
+                try:
+                    plain = decrypt_api_key(settings.encrypted_openai_api_key)
+                    result["openai_api_key_set"] = True
+                    result["openai_api_key_masked"] = mask_api_key(plain)
+                except Exception:
+                    pass
+            if settings.encrypted_anthropic_api_key:
+                try:
+                    plain = decrypt_api_key(settings.encrypted_anthropic_api_key)
+                    result["anthropic_api_key_set"] = True
+                    result["anthropic_api_key_masked"] = mask_api_key(plain)
+                except Exception:
+                    pass
+
+        return result
+
+    async def get_decrypted_api_keys(self, user_id: str) -> dict:
+        """Return decrypted API keys (internal use only, never expose via API)."""
+        from synaptiq.services.encryption import decrypt_api_key
+
+        settings = await self.get_user_settings(user_id)
+        result: dict = {"openai_api_key": None, "anthropic_api_key": None}
+
+        if settings:
+            if settings.encrypted_openai_api_key:
+                try:
+                    result["openai_api_key"] = decrypt_api_key(
+                        settings.encrypted_openai_api_key
+                    )
+                except Exception:
+                    pass
+            if settings.encrypted_anthropic_api_key:
+                try:
+                    result["anthropic_api_key"] = decrypt_api_key(
+                        settings.encrypted_anthropic_api_key
+                    )
+                except Exception:
+                    pass
+
+        return result
+
     async def provision_knowledge_space(self, user_id: str) -> str:
         """
         Provision a knowledge graph for a new user.
