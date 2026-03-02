@@ -82,7 +82,7 @@ export function ModelSelector({
       </button>
 
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 z-50 min-w-[220px] rounded-xl border border-border bg-surface shadow-elevated overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-150">
+        <div className="absolute bottom-full mb-1 left-0 z-50 min-w-[220px] rounded-xl border border-border bg-[var(--canvas-elevated)] shadow-elevated overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-150">
           {(["openai", "anthropic"] as const).map((provider) => {
             const group = models.filter((m) => m.provider === provider);
             if (group.length === 0) return null;

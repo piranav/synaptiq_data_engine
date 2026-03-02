@@ -55,7 +55,7 @@ export function ChatComposer({
   const canSend = content.trim().length > 0 && !isSending && !disabled;
 
   return (
-    <div className="sticky bottom-0 z-10 w-full border-t border-border px-4 md:px-6 py-3 glass">
+    <div className="sticky bottom-0 z-10 w-full border-t border-border px-4 md:px-6 py-3 bg-[var(--canvas)]">
       <div className={clsx("w-full", className)}>
         <div className="flex items-end gap-2">
           <div
