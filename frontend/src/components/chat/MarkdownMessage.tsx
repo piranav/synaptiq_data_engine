@@ -70,6 +70,11 @@ export function MarkdownMessage({ content, className, citationAnchorPrefix }: Ma
                     tbody: ({ children }) => <tbody>{children}</tbody>,
                     th: ({ children }) => <th className="border border-border px-2 py-1 text-left font-medium text-primary">{children}</th>,
                     td: ({ children }) => <td className="border border-border px-2 py-1 text-primary/90">{children}</td>,
+                    pre: ({ children }) => {
+                        // Let mermaid blocks and styled code blocks render
+                        // without an extra <pre> wrapper.
+                        return <>{children}</>;
+                    },
                     code: ({ className: codeClass, children, ...props }) => {
                         const match = /language-(\w+)/.exec(codeClass || "");
                         const language = match?.[1]?.toLowerCase();

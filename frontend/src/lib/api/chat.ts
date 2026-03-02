@@ -123,11 +123,12 @@ class ChatService {
      */
     async sendMessage(
         conversationId: string,
-        content: string
+        content: string,
+        modelId?: string,
     ): Promise<ChatResponse> {
         const { data } = await api.post<ChatResponse>(
             `/chat/conversations/${conversationId}/messages`,
-            { content }
+            { content, model_id: modelId || undefined }
         );
         return data;
     }

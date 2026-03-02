@@ -75,6 +75,22 @@ class UpdateSettingsRequest(BaseModel):
     analytics_opt_in: Optional[bool] = None
 
 
+class SaveApiKeysRequest(BaseModel):
+    """Request to save API keys (empty string clears the key)."""
+
+    openai_api_key: Optional[str] = Field(None, description="OpenAI API key")
+    anthropic_api_key: Optional[str] = Field(None, description="Anthropic API key")
+
+
+class ApiKeysResponse(BaseModel):
+    """Masked API key status."""
+
+    openai_api_key_set: bool
+    openai_api_key_masked: str
+    anthropic_api_key_set: bool
+    anthropic_api_key_masked: str
+
+
 class UserStatsResponse(BaseModel):
     """User knowledge base statistics."""
     
@@ -234,6 +250,58 @@ async def update_settings(
         processing_mode=settings.processing_mode,
         analytics_opt_in=settings.analytics_opt_in,
     )
+
+
+@router.get(
+    "/api-keys",
+    response_model=ApiKeysResponse,
+    summary="Get masked API key status",
+)
+async def get_api_keys(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+) -> ApiKeysResponse:
+    """Return masked versions of the user's stored API keys."""
+    user_service = UserService(session)
+    try:
+        result = await user_service.get_api_keys_masked(user.id)
+    except Exception as e:
+        if "does not exist" in str(e):
+            logger.warning("API key columns missing – run: alembic upgrade head")
+            return ApiKeysResponse(
+                openai_api_key_set=False, openai_api_key_masked="",
+                anthropic_api_key_set=False, anthropic_api_key_masked="",
+            )
+        raise
+    return ApiKeysResponse(**result)
+
+
+@router.put(
+    "/api-keys",
+    response_model=ApiKeysResponse,
+    summary="Save API keys (encrypted)",
+)
+async def save_api_keys(
+    body: SaveApiKeysRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+) -> ApiKeysResponse:
+    """Encrypt and save the user's API keys. Pass empty string to clear a key."""
+    user_service = UserService(session)
+    try:
+        result = await user_service.save_api_keys(
+            user_id=user.id,
+            openai_api_key=body.openai_api_key,
+            anthropic_api_key=body.anthropic_api_key,
+        )
+    except Exception as e:
+        if "does not exist" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database migration pending. Run: alembic upgrade head",
+            )
+        raise
+    return ApiKeysResponse(**result)
 
 
 @router.get(

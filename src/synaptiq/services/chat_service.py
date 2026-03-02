@@ -35,6 +35,8 @@ class ChatService:
         self,
         session: AsyncSession,
         query_agent: Optional[QueryAgent] = None,
+        model_id: Optional[str] = None,
+        anthropic_api_key: Optional[str] = None,
     ):
         """
         Initialize chat service.
@@ -42,15 +44,22 @@ class ChatService:
         Args:
             session: SQLAlchemy async session
             query_agent: QueryAgent instance (lazy initialized if not provided)
+            model_id: LLM model identifier for this session
+            anthropic_api_key: User-supplied Anthropic key
         """
         self.session = session
         self._query_agent = query_agent
+        self._model_id = model_id
+        self._anthropic_api_key = anthropic_api_key
     
     @property
     def query_agent(self) -> QueryAgent:
-        """Lazy-initialize QueryAgent."""
+        """Lazy-initialize QueryAgent with the configured model."""
         if self._query_agent is None:
-            self._query_agent = QueryAgent()
+            self._query_agent = QueryAgent(
+                model_id=self._model_id,
+                anthropic_api_key=self._anthropic_api_key,
+            )
         return self._query_agent
     
     # =========================================================================

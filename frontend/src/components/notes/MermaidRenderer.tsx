@@ -55,14 +55,16 @@ export function MermaidRenderer({ code, className = "", theme = "dark" }: Mermai
     const containerRef = useRef<HTMLDivElement>(null);
     const [error, setError] = useState<string | null>(null);
     const [svg, setSvg] = useState<string>("");
+    const idRef = useRef(`mermaid-${Math.random().toString(36).slice(2, 10)}`);
 
     useEffect(() => {
+        let cancelled = false;
+
         const renderDiagram = async () => {
-            if (!code.trim() || !containerRef.current) return;
+            if (!code.trim()) return;
 
             try {
                 setError(null);
-                const id = `mermaid-${Date.now()}`;
                 const config = getThemeConfig(theme);
 
                 mermaid.initialize({
@@ -73,25 +75,22 @@ export function MermaidRenderer({ code, className = "", theme = "dark" }: Mermai
                         htmlLabels: true,
                         curve: "basis",
                     },
+                    securityLevel: "loose",
                 });
 
-                // Validate the syntax first
-                const isValid = await mermaid.parse(code);
-                if (!isValid) {
-                    setError("Invalid mermaid syntax");
-                    return;
-                }
-
-                // Render the diagram
-                const { svg: renderedSvg } = await mermaid.render(id, code);
-                setSvg(renderedSvg);
+                await mermaid.parse(code);
+                const { svg: renderedSvg } = await mermaid.render(idRef.current, code);
+                if (!cancelled) setSvg(renderedSvg);
             } catch (err) {
                 console.error("Mermaid render error:", err);
-                setError(err instanceof Error ? err.message : "Failed to render diagram");
+                if (!cancelled) {
+                    setError(err instanceof Error ? err.message : "Failed to render diagram");
+                }
             }
         };
 
         renderDiagram();
+        return () => { cancelled = true; };
     }, [code, theme]);
 
     if (error) {
