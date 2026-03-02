@@ -150,9 +150,12 @@ async def _resolve_chat_service(
     anthropic_key: Optional[str] = None
 
     if info.provider == "anthropic":
-        user_svc = UserService(session)
-        keys = await user_svc.get_decrypted_api_keys(user.id)
-        anthropic_key = keys.get("anthropic_api_key")
+        try:
+            user_svc = UserService(session)
+            keys = await user_svc.get_decrypted_api_keys(user.id)
+            anthropic_key = keys.get("anthropic_api_key")
+        except Exception:
+            pass
 
         if not anthropic_key:
             settings = get_settings()

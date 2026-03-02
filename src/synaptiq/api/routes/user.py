@@ -263,7 +263,16 @@ async def get_api_keys(
 ) -> ApiKeysResponse:
     """Return masked versions of the user's stored API keys."""
     user_service = UserService(session)
-    result = await user_service.get_api_keys_masked(user.id)
+    try:
+        result = await user_service.get_api_keys_masked(user.id)
+    except Exception as e:
+        if "does not exist" in str(e):
+            logger.warning("API key columns missing – run: alembic upgrade head")
+            return ApiKeysResponse(
+                openai_api_key_set=False, openai_api_key_masked="",
+                anthropic_api_key_set=False, anthropic_api_key_masked="",
+            )
+        raise
     return ApiKeysResponse(**result)
 
 
@@ -279,11 +288,19 @@ async def save_api_keys(
 ) -> ApiKeysResponse:
     """Encrypt and save the user's API keys. Pass empty string to clear a key."""
     user_service = UserService(session)
-    result = await user_service.save_api_keys(
-        user_id=user.id,
-        openai_api_key=body.openai_api_key,
-        anthropic_api_key=body.anthropic_api_key,
-    )
+    try:
+        result = await user_service.save_api_keys(
+            user_id=user.id,
+            openai_api_key=body.openai_api_key,
+            anthropic_api_key=body.anthropic_api_key,
+        )
+    except Exception as e:
+        if "does not exist" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database migration pending. Run: alembic upgrade head",
+            )
+        raise
     return ApiKeysResponse(**result)
 
 

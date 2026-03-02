@@ -115,16 +115,42 @@ class UserService:
         """
         Get user settings.
         
-        Args:
-            user_id: User ID
-            
-        Returns:
-            UserSettings if found, None otherwise
+        Falls back to a column-subset query when the DB schema is behind
+        the ORM model (i.e. migration 004 has not been applied yet).
         """
-        result = await self.session.execute(
-            select(UserSettings).where(UserSettings.user_id == user_id)
-        )
-        return result.scalar_one_or_none()
+        try:
+            result = await self.session.execute(
+                select(UserSettings).where(UserSettings.user_id == user_id)
+            )
+            return result.scalar_one_or_none()
+        except Exception as e:
+            if "does not exist" not in str(e):
+                raise
+            logger.warning("API-key columns missing; falling back to legacy query")
+            await self.session.rollback()
+            from sqlalchemy import text
+            row = (
+                await self.session.execute(
+                    text(
+                        "SELECT user_id, theme, accent_color, sidebar_collapsed, "
+                        "density, processing_mode, analytics_opt_in, updated_at "
+                        "FROM user_settings WHERE user_id = :uid"
+                    ),
+                    {"uid": user_id},
+                )
+            ).mappings().first()
+            if row is None:
+                return None
+            s = UserSettings.__new__(UserSettings)
+            for col in (
+                "user_id", "theme", "accent_color", "sidebar_collapsed",
+                "density", "processing_mode", "analytics_opt_in", "updated_at",
+            ):
+                object.__setattr__(s, col, row[col])
+            for col in ("encrypted_openai_api_key", "encrypted_anthropic_api_key"):
+                object.__setattr__(s, col, None)
+            object.__setattr__(s, "preferred_model", "gpt-5.2")
+            return s
     
     async def update_user(self, user_id: str, **updates) -> Optional[User]:
         """
@@ -166,18 +192,40 @@ class UserService:
         if not updates:
             return await self.get_user_settings(user_id)
         
-        # Check if settings exist
         settings = await self.get_user_settings(user_id)
         if not settings:
-            # Create default settings with updates
-            settings = UserSettings(user_id=user_id, **updates)
-            self.session.add(settings)
+            try:
+                settings = UserSettings(user_id=user_id, **updates)
+                self.session.add(settings)
+                await self.session.flush()
+            except Exception as e:
+                if "does not exist" not in str(e):
+                    raise
+                await self.session.rollback()
+                from sqlalchemy import text
+                cols = ", ".join(["user_id"] + list(updates.keys()))
+                placeholders = ", ".join([":user_id"] + [f":{k}" for k in updates])
+                await self.session.execute(
+                    text(f"INSERT INTO user_settings ({cols}) VALUES ({placeholders})"),
+                    {"user_id": user_id, **updates},
+                )
         else:
-            await self.session.execute(
-                update(UserSettings)
-                .where(UserSettings.user_id == user_id)
-                .values(**updates)
-            )
+            try:
+                await self.session.execute(
+                    update(UserSettings)
+                    .where(UserSettings.user_id == user_id)
+                    .values(**updates)
+                )
+            except Exception as e:
+                if "does not exist" not in str(e):
+                    raise
+                await self.session.rollback()
+                from sqlalchemy import text
+                set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+                await self.session.execute(
+                    text(f"UPDATE user_settings SET {set_clause} WHERE user_id = :user_id"),
+                    {"user_id": user_id, **updates},
+                )
         
         return await self.get_user_settings(user_id)
     
