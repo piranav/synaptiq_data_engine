@@ -49,19 +49,19 @@ AVAILABLE_MODELS: list[ModelInfo] = [
         id="claude-4.6-sonnet",
         display_name="Claude 4.6 Sonnet",
         provider="anthropic",
-        model_name="anthropic/claude-sonnet-4-6-20260301",
+        model_name="anthropic/claude-sonnet-4-6",
     ),
     ModelInfo(
         id="claude-4.6-opus",
         display_name="Claude 4.6 Opus",
         provider="anthropic",
-        model_name="anthropic/claude-opus-4-6-20260301",
+        model_name="anthropic/claude-opus-4-6",
     ),
     ModelInfo(
         id="claude-4.5-haiku",
         display_name="Claude 4.5 Haiku",
         provider="anthropic",
-        model_name="anthropic/claude-haiku-4-5-20260301",
+        model_name="anthropic/claude-haiku-4-5",
     ),
 ]
 
