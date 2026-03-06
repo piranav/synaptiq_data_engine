@@ -52,11 +52,10 @@ function NotesPageInner() {
       draftHandledRef.current = true;
       (async () => {
         try {
-          const title = draftText
-            ? draftText.split(/\s+/).slice(0, 6).join(" ") + (draftText.split(/\s+/).length > 6 ? "..." : "")
-            : "Untitled";
+          const title = "Untitled";
+          // TipTap expects paragraph content as array of inline nodes, not a plain string
           const content: NoteBlock[] = draftText
-            ? [{ type: "paragraph", content: draftText } as unknown as NoteBlock]
+            ? [{ type: "paragraph", content: [{ type: "text", text: draftText }] } as unknown as NoteBlock]
             : [];
           const note = await notesService.createNote(title, content);
           setNotes((prev) => [
@@ -73,6 +72,7 @@ function NotesPageInner() {
             ...prev,
           ]);
           setActiveNoteId(note.id);
+          setActiveNote(note);
           router.replace("/notes");
         } catch (e) {
           console.error("Failed to create draft note", e);

@@ -82,9 +82,18 @@ export function MermaidRenderer({ code, className = "", theme = "dark" }: Mermai
                 const { svg: renderedSvg } = await mermaid.render(idRef.current, code);
                 if (!cancelled) setSvg(renderedSvg);
             } catch (err) {
-                console.error("Mermaid render error:", err);
                 if (!cancelled) {
-                    setError(err instanceof Error ? err.message : "Failed to render diagram");
+                    const message = err instanceof Error ? err.message : "Failed to render diagram";
+                    const isParseError = typeof message === "string" && (
+                        message.includes("Parse error") ||
+                        message.includes("Expecting") ||
+                        message.includes("got '")
+                    );
+                    setError(
+                        isParseError
+                            ? "Invalid diagram syntax. If node labels contain spaces, brackets ( ] or [ ), or numbers at the end, wrap the label in double quotes, e.g. A[\"End 1\"] instead of A[End 1]."
+                            : message
+                    );
                 }
             }
         };

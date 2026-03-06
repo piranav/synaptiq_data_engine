@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import clsx from "clsx";
+import { useEffect, useState } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
@@ -27,6 +28,9 @@ export function TopBar() {
   const pathname = usePathname();
   const { user } = useAuth();
   const { themeMode, setThemeMode } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
 
   const initials = user?.name
     ? user.name
@@ -49,7 +53,7 @@ export function TopBar() {
         <div className="hidden md:flex items-center gap-1 rounded-[6px] border border-border bg-surface/70 p-1">
           {themeItems.map((item) => {
             const Icon = item.icon;
-            const isActive = themeMode === item.mode;
+            const isActive = mounted && themeMode === item.mode;
 
             return (
               <button
@@ -76,11 +80,11 @@ export function TopBar() {
           aria-label="Toggle theme"
           className="md:hidden h-9 w-9 rounded-[6px] border border-border bg-surface/70 text-secondary hover:text-primary hover:bg-[var(--hover-bg)] transition-colors inline-flex items-center justify-center"
         >
-          {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          {mounted && themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </button>
 
         <div className="h-9 w-9 overflow-hidden rounded-[6px] border border-border bg-elevated inline-flex items-center justify-center text-[11px] font-medium text-primary">
-          {user?.avatar_url ? (
+          {mounted && user?.avatar_url ? (
             <Image
               src={user.avatar_url}
               alt={`${user?.name || "User"} avatar`}
@@ -91,7 +95,7 @@ export function TopBar() {
               referrerPolicy="no-referrer"
             />
           ) : (
-            initials
+            mounted ? initials : "?"
           )}
         </div>
       </div>
