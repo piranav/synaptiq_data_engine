@@ -44,7 +44,7 @@ export function MessageBubble({ message, isStreaming = false, className }: Messa
           "rounded-xl border",
           isUser
             ? "border-accent/25 bg-[var(--accent-soft)]"
-            : "border-border bg-surface",
+            : "border-border bg-[var(--canvas-elevated)]",
         )}
       >
         <div className="p-4">

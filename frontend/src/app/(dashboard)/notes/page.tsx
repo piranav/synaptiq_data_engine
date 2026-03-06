@@ -1,14 +1,27 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, FileText } from "lucide-react";
 import type { JSONContent } from "@tiptap/core";
 import { notesService, type Note, type NoteSummary, type NoteBlock, type FolderTreeItem } from "@/lib/api/notes";
 import { NoteEditor, NotesSidebar, NotesRightPanel } from "@/components/notes";
 
 export default function NotesPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-secondary" />
+      </div>
+    }>
+      <NotesPageInner />
+    </Suspense>
+  );
+}
+
+function NotesPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [folders, setFolders] = useState<FolderTreeItem[]>([]);
@@ -21,6 +34,7 @@ export default function NotesPage() {
   const [showRightPanel] = useState(true);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
+  const draftHandledRef = useRef(false);
 
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingContentRef = useRef<{ title: string; content: NoteBlock[] } | null>(null);
@@ -28,6 +42,44 @@ export default function NotesPage() {
   useEffect(() => {
     loadNotesAndFolders();
   }, []);
+
+  useEffect(() => {
+    if (draftHandledRef.current) return;
+    const draftText = searchParams.get("draft");
+    const isNew = searchParams.get("new");
+
+    if ((draftText || isNew) && !isLoadingNotes) {
+      draftHandledRef.current = true;
+      (async () => {
+        try {
+          const title = draftText
+            ? draftText.split(/\s+/).slice(0, 6).join(" ") + (draftText.split(/\s+/).length > 6 ? "..." : "")
+            : "Untitled";
+          const content: NoteBlock[] = draftText
+            ? [{ type: "paragraph", content: draftText } as unknown as NoteBlock]
+            : [];
+          const note = await notesService.createNote(title, content);
+          setNotes((prev) => [
+            {
+              id: note.id,
+              folder_id: note.folder_id,
+              title: note.title,
+              preview: null,
+              word_count: draftText ? draftText.split(/\s+/).length : 0,
+              is_pinned: false,
+              is_archived: false,
+              updated_at: note.updated_at,
+            },
+            ...prev,
+          ]);
+          setActiveNoteId(note.id);
+          router.replace("/notes");
+        } catch (e) {
+          console.error("Failed to create draft note", e);
+        }
+      })();
+    }
+  }, [searchParams, isLoadingNotes, router]);
 
   useEffect(() => {
     if (activeNoteId) {

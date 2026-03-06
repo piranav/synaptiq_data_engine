@@ -43,6 +43,11 @@ from .prompts import (
 from .tools import vector_search, get_concept_details
 from .sparql_agent import create_sparql_agent, load_ontology_schema
 from .session import get_session
+from .model_config import (
+    resolve_model_for_agent,
+    get_model_info,
+    DEFAULT_MODEL_ID,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -64,6 +69,8 @@ class QueryAgent:
         fuseki_store: Optional[FusekiStore] = None,
         qdrant_store: Optional[QdrantStore] = None,
         embedding_generator: Optional[EmbeddingGenerator] = None,
+        model_id: Optional[str] = None,
+        anthropic_api_key: Optional[str] = None,
     ):
         """
         Initialize the query agent.
@@ -72,10 +79,14 @@ class QueryAgent:
             fuseki_store: SPARQL client (creates new if not provided)
             qdrant_store: Vector store client (creates new if not provided)
             embedding_generator: Embeddings generator (creates new if not provided)
+            model_id: LLM model identifier (see model_config.AVAILABLE_MODELS)
+            anthropic_api_key: User-supplied Anthropic key for Claude models
         """
         self.fuseki = fuseki_store or FusekiStore()
         self.qdrant = qdrant_store or QdrantStore()
         self.embedder = embedding_generator or EmbeddingGenerator()
+        self._model_id = model_id or DEFAULT_MODEL_ID
+        self._anthropic_api_key = anthropic_api_key
         
         # Load ontology schema
         self.ontology_schema = load_ontology_schema()
@@ -84,15 +95,20 @@ class QueryAgent:
         # Create sub-agents
         self._init_agents()
         
-        logger.info("QueryAgent initialized")
+        logger.info("QueryAgent initialized", model_id=self._model_id)
     
     def _init_agents(self):
-        """Initialize all sub-agents."""
+        """Initialize all sub-agents using the configured model."""
+        resolved = resolve_model_for_agent(
+            self._model_id,
+            anthropic_api_key=self._anthropic_api_key,
+        )
+
         # Intent Classifier
         self.intent_classifier = Agent[AgentContext](
             name="Intent Classifier",
             instructions=INTENT_CLASSIFIER_SYSTEM_PROMPT,
-            model="gpt-5.2",
+            model=resolved,
             output_type=IntentClassification,
         )
         
@@ -106,7 +122,7 @@ class QueryAgent:
         self.synthesizer = Agent[AgentContext](
             name="Response Synthesizer",
             instructions=RESPONSE_SYNTHESIZER_SYSTEM_PROMPT,
-            model="gpt-5.2",
+            model=resolved,
             output_type=QueryResponse,
         )
         
@@ -114,7 +130,7 @@ class QueryAgent:
         self.orchestrator = Agent[AgentContext](
             name="Query Orchestrator",
             instructions=ORCHESTRATOR_SYSTEM_PROMPT,
-            model="gpt-5.2",
+            model=resolved,
             tools=[
                 vector_search,
                 get_concept_details,

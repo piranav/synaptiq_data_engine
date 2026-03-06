@@ -38,6 +38,9 @@ export function NavRail() {
   const { user } = useAuth();
   const [isSyncing, setIsSyncing] = useState(false);
   const [showMobileMore, setShowMobileMore] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     const checkSyncStatus = async () => {
@@ -138,7 +141,7 @@ export function NavRail() {
             aria-label="Log out"
             className="relative flex h-10 w-full items-center rounded-[6px] border border-transparent transition-colors md:justify-center xl:justify-start xl:px-3 xl:gap-2.5 text-tertiary hover:text-secondary hover:border-border-subtle hover:bg-surface/55"
           >
-            {user?.avatar_url ? (
+            {mounted && user?.avatar_url ? (
               <Image
                 src={user.avatar_url}
                 alt={`${user?.name || "User"} avatar`}
@@ -150,11 +153,11 @@ export function NavRail() {
               />
             ) : (
               <div className="h-7 w-7 rounded-[5px] border border-border bg-elevated inline-flex items-center justify-center text-[10px] font-medium text-primary">
-                {initials}
+                {mounted ? initials : "?"}
               </div>
             )}
             <span className="hidden xl:inline text-[11px] uppercase tracking-[0.15em] truncate max-w-[122px]">
-              {user?.name || "Log out"}
+              {mounted ? (user?.name || "Log out") : "Log out"}
             </span>
             <LogOut className="hidden xl:block h-3.5 w-3.5 ml-auto" strokeWidth={1.9} />
             <span
