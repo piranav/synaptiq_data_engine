@@ -174,6 +174,7 @@ cd frontend && npm run dev
 - Qdrant (vector database)
 - PostgreSQL + SQLAlchemy (relational data)
 - Celery + Redis (background jobs)
+- SUPADATA - for extraction
 
 **Frontend**
 - Next.js 14 (React framework)
@@ -181,7 +182,7 @@ cd frontend && npm run dev
 - CSS Modules with glassmorphism design
 
 **AI/ML**
-- OpenAI GPT-4/GPT-4.1 (agents & chat)
+- OpenAI and Anthropic (agents & chat)
 - OpenAI text-embedding-3-small (embeddings)
 - LangChain (concept extraction)
 
